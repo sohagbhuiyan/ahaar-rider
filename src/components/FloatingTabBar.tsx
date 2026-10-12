@@ -1,7 +1,14 @@
 import { useActiveOrderCount } from "@/lib/store";
 import { colors, navTint } from "@/lib/theme";
 import React, { useEffect, useState } from "react";
-import { Animated, Platform, Text, TouchableOpacity, View } from "react-native";
+import {
+  Animated,
+  Platform,
+  Text,
+  TouchableOpacity,
+  View,
+  type ColorValue,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 const ACTIVE_COLOR = navTint.active;
@@ -28,10 +35,10 @@ type DescriptorOptions = {
   title?: string;
   tabBarLabel?:
     | string
-    | ((props: { focused: boolean; color: string }) => React.ReactNode);
+    | ((props: { focused: boolean; color: ColorValue }) => React.ReactNode);
   tabBarIcon?: (props: {
     focused: boolean;
-    color: string;
+    color: ColorValue;
     size: number;
   }) => React.ReactNode;
 };
@@ -47,7 +54,7 @@ interface FloatingTabBarProps {
 interface TabItemProps {
   isFocused: boolean;
   label: string;
-  icon: (props: { color: string; filled: boolean }) => React.ReactNode;
+  icon: (props: { color: ColorValue; filled: boolean }) => React.ReactNode;
   onPress: () => void;
   onLongPress: () => void;
   badge?: number;
@@ -250,7 +257,7 @@ export default function FloatingTabBar({
           navigation.emit({ type: "tabLongPress", target: route.key });
         };
 
-        const iconRenderer = (props: { color: string; filled: boolean }) =>
+        const iconRenderer = (props: { color: ColorValue; filled: boolean }) =>
           options.tabBarIcon
             ? (options.tabBarIcon({
                 ...props,

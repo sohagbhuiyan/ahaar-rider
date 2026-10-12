@@ -13,11 +13,11 @@ export default function ProfileScreen() {
         {/* Profile */}
         <View className="mt-6 items-center rounded-2xl bg-white p-6">
           <View className="h-20 w-20 items-center justify-center rounded-full bg-pink-50">
-            <Text className="text-3xl font-bold text-[#FF2B85]">S</Text>
+            <Text className="text-3xl font-bold text-[#FF2B85]">###</Text>
           </View>
 
           <Text className="mt-3 text-lg font-bold text-gray-900">
-            Sohag Rider
+            XYZ Rider
           </Text>
 
           <Text className="mt-1 text-sm text-gray-500">
