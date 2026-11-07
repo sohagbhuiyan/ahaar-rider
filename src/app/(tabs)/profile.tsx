@@ -1,147 +1,290 @@
-import { useState } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { useRouter } from 'expo-router';
+import {
+  ActivityIndicator,
+  Alert,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  Text,
+  View,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { toast } from 'sonner-native';
+
+import { Badge, Button, Card } from '@/components/ui';
+import { useLogout, useRiderMe } from '@/lib/api/hooks/useRiderAuth';
+import { useRiderDocuments } from '@/lib/api/hooks/useRiderDocuments';
+import { useAuthStore } from '@/lib/auth/authStore';
+import { colors } from '@/lib/theme';
 
 export default function ProfileScreen() {
-  const [selectedItem, setSelectedItem] = useState<string | null>(null);
-  const profileItems = [
-    { title: "Personal details", detail: "Name, phone and email", mark: "01" },
-    {
-      title: "Vehicle & documents",
-      detail: "Motorcycle · Valid through 2027",
-      mark: "02",
-    },
-    { title: "Payout account", detail: "Al Rajhi Bank ···· 2841", mark: "03" },
-    {
-      title: "Help & support",
-      detail: "Rider care is available 24/7",
-      mark: "04",
-    },
-  ];
+  const router = useRouter();
+  const { user, profile } = useAuthStore();
+
+  // TanStack Query Hooks
+  const { data: meData, refetch: refetchMe } = useRiderMe();
+  const {
+    data: docsData,
+    isLoading: loadingDocs,
+    isRefetching: refetchingDocs,
+    refetch: refetchDocs,
+  } = useRiderDocuments();
+  const logoutMutation = useLogout();
+
+  const activeProfile = meData?.driver_profile || profile;
+  const documents = docsData?.documents || [];
+
+  const onRefresh = async () => {
+    await Promise.all([refetchMe(), refetchDocs()]);
+  };
+
+  const handleSignOut = () => {
+    Alert.alert('Sign Out', 'Are you sure you want to log out of AHAAR Rider?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Sign Out',
+        style: 'destructive',
+        onPress: () => {
+          logoutMutation.mutate(undefined, {
+            onSuccess: () => {
+              toast.success('Signed out successfully.');
+              router.replace('/');
+            },
+          });
+        },
+      },
+    ]);
+  };
+
+  const isCar = activeProfile?.vehicle_type === 'car';
+
+  const docTitleMap: Record<string, string> = {
+    iqama: 'National ID / Iqama',
+    driving_license: 'Driving License',
+    vehicle_registration: 'Istimara (Vehicle Registration)',
+    food_handler_certificate: 'Food Safety Certificate',
+  };
 
   return (
-    <SafeAreaView className="flex-1 bg-[#f4f6f1]">
+    <SafeAreaView className="flex-1 bg-surface-muted" edges={['top']}>
+      {/* Top Header */}
+      <View className="px-5 pt-3 pb-3 bg-surface border-b border-border">
+        <Text className="text-xs font-semibold uppercase tracking-wider text-text-muted">
+          Rider Account
+        </Text>
+        <Text className="text-2xl font-black text-text-primary mt-0.5">Profile & Compliance</Text>
+      </View>
+
       <ScrollView
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{
-          paddingHorizontal: 20,
-          paddingTop: 14,
-          paddingBottom: 28,
-        }}
+        contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 16, paddingBottom: 110 }}
+        refreshControl={
+          <RefreshControl
+            refreshing={refetchingDocs}
+            onRefresh={onRefresh}
+            tintColor={colors.brand[500]}
+          />
+        }
       >
-        <Text className="text-xs font-semibold uppercase tracking-[1.5px] text-[#68756b]">
-          RIDER ACCOUNT
-        </Text>
-        <Text className="mt-1 text-[28px] font-extrabold text-[#17251b]">
-          Profile
-        </Text>
-
-        <View className="mt-5 overflow-hidden rounded-[6px] bg-[#1c4e33] p-5">
-          <View className="flex-row items-center">
-            <View className="h-[62px] w-[62px] items-center justify-center rounded-full border border-[#6e927a] bg-[#2c6442]">
-              <Text className="text-lg font-extrabold text-white">SK</Text>
-            </View>
-            <View className="ml-4 flex-1">
-              <Text className="text-xl font-extrabold text-white">
-                Sami Khalid
-              </Text>
-              <Text className="mt-1 text-sm text-[#c0d4c5]">
-                AHAAR delivery partner
-              </Text>
-            </View>
-            <View className="rounded-[3px] border border-[#6e927a] px-2 py-1">
-              <Text className="text-[9px] font-bold uppercase tracking-[1px] text-[#d9e8dd]">
-                ACTIVE
-              </Text>
-            </View>
-          </View>
-
-          <View className="mt-5 flex-row border-t border-[#406a4e] pt-4">
-            <View className="flex-1">
-              <Text className="text-[10px] font-semibold uppercase tracking-[1px] text-[#c0d4c5]">
-                RIDER ID
-              </Text>
-              <Text className="mt-1 text-sm font-bold text-white">
-                AR-20841
-              </Text>
-            </View>
-            <View className="flex-1">
-              <Text className="text-[10px] font-semibold uppercase tracking-[1px] text-[#c0d4c5]">
-                ON AHAAR SINCE
-              </Text>
-              <Text className="mt-1 text-sm font-bold text-white">
-                March 2024
-              </Text>
-            </View>
-          </View>
-        </View>
-
-        <View className="mt-6 flex-row items-end justify-between">
-          <Text className="text-base font-extrabold text-[#17251b]">
-            Account details
-          </Text>
-          <Text className="text-xs text-[#89918a]">PROFILE 92% COMPLETE</Text>
-        </View>
-
-        <View className="mt-3 border-y border-[#e1e6de] bg-white">
-          {profileItems.map((item, index) => (
-            <Pressable
-              key={item.title}
-              accessibilityRole="button"
-              accessibilityState={{ expanded: selectedItem === item.title }}
-              onPress={() =>
-                setSelectedItem(selectedItem === item.title ? null : item.title)
-              }
-              className={`flex-row items-center px-3 py-4 ${index < profileItems.length - 1 ? "border-b border-[#edf0eb]" : ""}`}
-            >
-              <View className="h-9 w-9 items-center justify-center border border-[#e1e6de] bg-[#f4f6f1]">
-                <Text className="text-[10px] font-bold text-[#24613f]">
-                  {item.mark}
+        <View className="gap-5">
+          {/* Identity Card */}
+          <Card className="p-5 bg-brand-500 border-none">
+            <View className="flex-row items-center">
+              <View className="h-16 w-16 rounded-2xl bg-white/20 border border-white/30 items-center justify-center">
+                <Text className="text-2xl font-black text-white">
+                  {user?.name ? user.name.slice(0, 2).toUpperCase() : 'AH'}
                 </Text>
               </View>
-              <View className="ml-3 flex-1">
-                <Text className="text-sm font-bold text-[#17251b]">
-                  {item.title}
-                </Text>
-                <Text className="mt-1 text-xs text-[#89918a]">
-                  {item.detail}
-                </Text>
-                {selectedItem === item.title && (
-                  <Text className="mt-2 text-xs leading-5 text-[#24613f]">
-                    {item.title === "Help & support"
-                      ? "Rider care can help with an order, account or payout."
-                      : "Your verified rider information is up to date."}
-                  </Text>
-                )}
-              </View>
-              <Text className="ml-2 text-base font-medium text-[#89918a]">
-                {selectedItem === item.title ? "−" : "+"}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
 
-        <View className="mt-6 border-t border-[#dce4dc] pt-4">
-          <Text className="text-xs font-semibold uppercase tracking-[1.2px] text-[#68756b]">
-            SHIFT SUMMARY
-          </Text>
-          <View className="mt-3 flex-row justify-between">
-            <View>
-              <Text className="text-xl font-extrabold text-[#17251b]">
-                4.98
-              </Text>
-              <Text className="mt-1 text-xs text-[#68756b]">Rider rating</Text>
+              <View className="ml-4 flex-1">
+                <Text className="text-xl font-black text-white">{user?.name || 'Rider'}</Text>
+                <Text className="text-xs text-white/80 mt-0.5">{user?.phone || ''}</Text>
+                <Text className="text-xs text-white/70">{user?.email || ''}</Text>
+              </View>
+
+              <View className="rounded-full bg-white/20 px-3 py-1 border border-white/30">
+                <Text className="text-[10px] font-black uppercase text-white tracking-wider">
+                  {activeProfile?.approval_status === 'approved' ? 'ACTIVE' : 'ONBOARDING'}
+                </Text>
+              </View>
             </View>
-            <View>
-              <Text className="text-xl font-extrabold text-[#17251b]">98%</Text>
-              <Text className="mt-1 text-xs text-[#68756b]">Acceptance</Text>
+
+            <View className="mt-4 pt-3.5 border-t border-white/20 flex-row justify-between">
+              <View>
+                <Text className="text-[10px] uppercase font-bold text-white/70">Rider ID</Text>
+                <Text className="text-sm font-bold text-white mt-0.5">
+                  AR-{user?.id ? user.id.toString().padStart(5, '0') : '00001'}
+                </Text>
+              </View>
+
+              <View>
+                <Text className="text-[10px] uppercase font-bold text-white/70">Vehicle</Text>
+                <Text className="text-sm font-bold text-white mt-0.5">
+                  {isCar ? '🚗 Car (Catering)' : '🏍️ Bike (Instant)'}
+                </Text>
+              </View>
+
+              <View>
+                <Text className="text-[10px] uppercase font-bold text-white/70">Plate</Text>
+                <Text className="text-sm font-bold text-white mt-0.5">
+                  {activeProfile?.vehicle_plate || 'Assigned'}
+                </Text>
+              </View>
             </View>
-            <View>
-              <Text className="text-xl font-extrabold text-[#17251b]">
-                1,284
-              </Text>
-              <Text className="mt-1 text-xs text-[#68756b]">Deliveries</Text>
+          </Card>
+
+          {/* Operational Hub & Vehicle Info */}
+          <Card className="p-4 bg-surface">
+            <Text className="text-xs text-text-muted font-bold uppercase tracking-wider mb-2.5">
+              Assigned Kitchen Hub
+            </Text>
+            <View className="flex-row items-center justify-between">
+              <View>
+                <Text className="text-base font-bold text-text-primary">
+                  {activeProfile?.branch_name || 'Riyadh Central Branch'}
+                </Text>
+                <Text className="text-xs text-text-secondary mt-0.5">
+                  Authorized for dispatch operations
+                </Text>
+              </View>
+              <Badge label="VERIFIED HUB" variant="success" />
             </View>
+          </Card>
+
+          {/* Legal Documents & Compliance Checklist */}
+          <Card className="p-4 bg-surface">
+            <View className="flex-row items-center justify-between mb-3">
+              <View>
+                <Text className="text-xs text-text-muted font-bold uppercase tracking-wider">
+                  Regulatory Compliance
+                </Text>
+                <Text className="text-base font-black text-text-primary mt-0.5">
+                  Required Documents
+                </Text>
+              </View>
+              <Badge label="STRICT COMPLIANCE" variant="outline" />
+            </View>
+
+            {loadingDocs ? (
+              <View className="py-6 items-center">
+                <ActivityIndicator size="small" color={colors.brand[500]} />
+              </View>
+            ) : documents.length === 0 ? (
+              <View className="py-4 items-center">
+                <Text className="text-xs text-text-muted">No documents uploaded yet.</Text>
+                <Button
+                  label="Upload Documents"
+                  size="sm"
+                  className="mt-3"
+                  onPress={() => router.push('/document-upload' as any)}
+                />
+              </View>
+            ) : (
+              <View className="gap-3">
+                {documents.map((doc) => {
+                  const isApproved = doc.status === 'approved';
+                  const isRejected = doc.status === 'rejected';
+                  const isExpired = doc.status === 'expired';
+
+                  return (
+                    <View
+                      key={doc.id}
+                      className={`p-3.5 rounded-xl border ${
+                        isApproved
+                          ? 'border-success/30 bg-success-soft/30'
+                          : isRejected
+                          ? 'border-danger/40 bg-danger-soft/40'
+                          : isExpired
+                          ? 'border-warning/40 bg-warning-soft/40'
+                          : 'border-border bg-surface-muted'
+                      }`}
+                    >
+                      <View className="flex-row items-start justify-between">
+                        <View className="flex-1 mr-2">
+                          <Text className="font-bold text-sm text-text-primary">
+                            {docTitleMap[doc.type] || doc.type}
+                          </Text>
+                          {doc.document_number && (
+                            <Text className="text-xs font-mono text-text-secondary mt-0.5">
+                              #{doc.document_number}
+                            </Text>
+                          )}
+                          {doc.expires_at && (
+                            <Text className="text-[11px] text-text-muted mt-0.5">
+                              Expires: {doc.expires_at}
+                            </Text>
+                          )}
+                        </View>
+
+                        <Badge
+                          label={doc.status.toUpperCase()}
+                          variant={
+                            isApproved
+                              ? 'success'
+                              : isRejected
+                              ? 'danger'
+                              : isExpired
+                              ? 'warning'
+                              : 'brand'
+                          }
+                        />
+                      </View>
+
+                      {/* If rejected, show admin reason and replacement CTA */}
+                      {isRejected && (
+                        <View className="mt-2.5 pt-2.5 border-t border-danger/20">
+                          <Text className="text-xs font-bold text-danger">
+                            Admin Rejection Reason:
+                          </Text>
+                          <Text className="text-xs text-danger mt-0.5">
+                            {doc.rejection_reason || 'Document copy was unclear. Please upload a clear photo.'}
+                          </Text>
+                          <Button
+                            label="Replace Rejected Document"
+                            size="sm"
+                            variant="destructive"
+                            className="mt-2"
+                            onPress={() => router.push('/document-upload' as any)}
+                          />
+                        </View>
+                      )}
+                    </View>
+                  );
+                })}
+              </View>
+            )}
+          </Card>
+
+          {/* Payout Bank Info */}
+          <Card className="p-4 bg-surface">
+            <Text className="text-xs text-text-muted font-bold uppercase tracking-wider mb-1">
+              Payout Bank Account
+            </Text>
+            <View className="flex-row items-center justify-between">
+              <View>
+                <Text className="text-sm font-bold text-text-primary">
+                  Al Rajhi Bank (Riyadh)
+                </Text>
+                <Text className="text-xs font-mono text-text-muted mt-0.5">
+                  SA•••• •••• •••• 9102
+                </Text>
+              </View>
+              <Badge label="WEEKLY PAYOUT" variant="brand" />
+            </View>
+          </Card>
+
+          {/* App Info & Sign Out */}
+          <View className="gap-3">
+            <Button
+              label="Sign Out"
+              variant="outline"
+              size="md"
+              isLoading={logoutMutation.isPending}
+              onPress={handleSignOut}
+            />
+            <Text className="text-[11px] text-center text-text-muted">
+              AHAAR Rider App v1.0.0 · Production Delivery Hub
+            </Text>
           </View>
         </View>
       </ScrollView>

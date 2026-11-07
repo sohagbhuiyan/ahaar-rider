@@ -1,31 +1,19 @@
-import { useSyncExternalStore } from "react";
+import { create } from 'zustand';
 
-type RiderDemoState = {
-  isOnline: boolean;
-};
-
-let state: RiderDemoState = { isOnline: true };
-const listeners = new Set<() => void>();
-
-function subscribe(listener: () => void) {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
+interface DeliveryAppState {
+  activeOrderCount: number;
+  setActiveOrderCount: (count: number) => void;
+  selectedDeliveryId: number | null;
+  setSelectedDeliveryId: (id: number | null) => void;
 }
 
-function getSnapshot() {
-  return state;
-}
-
-export function setRiderOnline(isOnline: boolean) {
-  if (state.isOnline === isOnline) return;
-  state = { isOnline };
-  listeners.forEach((listener) => listener());
-}
-
-export function useRiderDemo() {
-  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
-}
+export const useDeliveryStore = create<DeliveryAppState>((set) => ({
+  activeOrderCount: 0,
+  setActiveOrderCount: (count: number) => set({ activeOrderCount: count }),
+  selectedDeliveryId: null,
+  setSelectedDeliveryId: (id: number | null) => set({ selectedDeliveryId: id }),
+}));
 
 export function useActiveOrderCount(): number {
-  return 1;
+  return useDeliveryStore((state) => state.activeOrderCount);
 }
