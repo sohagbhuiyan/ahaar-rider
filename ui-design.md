@@ -6,26 +6,29 @@ Create a premium, modern, clean, minimal, and highly functional food-delivery ri
 
 Prioritize usability, high contrast, glanceability, accessibility, and fast field interactions.
 
-## 2. Brand Identity & Design Tokens (Unified)
+## 2. Brand Identity & Design Tokens (Rider Palette)
 
-Follow the canonical AHAAR brand identity established in `ahaar-app/src/lib/tokens.js` and `ahaar/src/app/globals.css`:
+| Token | Color | Usage |
+|---|---|---|
+| **Primary** | `#FF7A00` | Main brand actions, active navigation, key highlights |
+| **Secondary** | `#E04E0C` | Strong accents, selected emphasis, important actions |
+| **Text** | `#1F1F1F` | Main text and headings |
+| **Background** | `#FFFFFF` | Main screen background |
+| **Surface** | `#FFF1E6` | Soft cards, grouped sections, subtle highlighted areas |
 
-- **Primary Brand Color:** `#FF2B85` (AHAAR Signature Pink / Magenta)
-- **Primary Dark:** `#D4006B`
-- **Primary Light:** `#FF6AAB`
-- **Primary Soft:** `#FFF0F7`
-- **Text Primary:** `#1A1A2E` (Navy Charcoal)
-- **Text Secondary:** `#4B5563`
-- **Text Muted:** `#9CA3AF`
-- **Background:** `#FFFFFF`
-- **Surface Muted:** `#F9F9F9`
-- **Border:** `#F0E0EA`
-- **Status Success (Online/Delivered):** `#059669`
-- **Status Warning (Pending/Cutoff):** `#D97706`
-- **Status Danger (Wrong Bag/Offline):** `#EF4444`
-- **Status Info (En Route):** `#2563EB`
+### Contrast Rules
+* Do not use white text on `#FF7A00` for normal-sized text; its contrast is insufficient.
+* Prefer `#1F1F1F` text/icons on `#FF7A00`.
+* White text on `#E04E0C` is suitable for prominent badges and hero cards.
+* Use accessible contrast for all text, icons, borders, and interactive states.
+* Do not use brand orange to communicate every status. Use separate semantic status colors.
 
-Use `#FF2B85` strategically for primary actions, active tabs, and critical highlights.
+### Semantic Status Colors
+* **Status Success (Online/Delivered):** `#059669` (Emerald, soft: `#ECFDF5`)
+* **Status Warning (Pending/Under Review):** `#D97706` (Amber, soft: `#FFFBEB`)
+* **Status Danger (Wrong Bag/Rejected):** `#DC2626` (Red, soft: `#FEF2F2`)
+* **Status Info (En Route/Navigating):** `#2563EB` (Blue, soft: `#EFF6FF`)
+* **Disabled / Inactive:** `#8C8C8C` / `#E5E7EB`
 
 ## 3. Typography
 

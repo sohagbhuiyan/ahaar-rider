@@ -21,7 +21,7 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
       name: 'AHAAR Delivery Alerts',
       importance: Notifications.AndroidImportance.MAX,
       vibrationPattern: [0, 250, 250, 250],
-      lightColor: '#FF2B85',
+      lightColor: '#FF7A00',
       sound: 'default',
     });
   }

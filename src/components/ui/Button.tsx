@@ -29,22 +29,22 @@ interface Props extends Omit<PressableProps, 'children' | 'style'> {
 
 const CONTAINER: Record<ButtonVariant, string> = {
   primary: 'bg-brand-500 active:bg-brand-600',
-  secondary: 'bg-brand-50 active:bg-brand-100',
-  outline: 'bg-transparent border border-border active:bg-surface-muted',
-  ghost: 'bg-transparent active:bg-surface-muted',
+  secondary: 'bg-brand-50 active:bg-brand-100 border border-brand-200',
+  outline: 'bg-transparent border border-border active:bg-surface-secondary',
+  ghost: 'bg-transparent active:bg-surface-secondary',
   destructive: 'bg-danger active:opacity-90',
   danger: 'bg-danger active:opacity-90',
   success: 'bg-success active:opacity-90',
 };
 
 const LABEL: Record<ButtonVariant, string> = {
-  primary: 'text-text-inverse',
-  secondary: 'text-brand-700',
-  outline: 'text-text-primary',
-  ghost: 'text-brand-500',
-  destructive: 'text-text-inverse',
-  danger: 'text-text-inverse',
-  success: 'text-text-inverse',
+  primary: 'text-text-primary font-black',
+  secondary: 'text-brand-700 font-bold',
+  outline: 'text-text-primary font-bold',
+  ghost: 'text-brand-700 font-bold',
+  destructive: 'text-text-inverse font-bold',
+  danger: 'text-text-inverse font-bold',
+  success: 'text-text-inverse font-bold',
 };
 
 const SIZE: Record<ButtonSize, string> = {
@@ -60,9 +60,9 @@ const LABEL_SIZE: Record<ButtonSize, string> = {
 };
 
 const SPINNER: Record<ButtonVariant, string> = {
-  primary: colors.text.inverse,
+  primary: colors.text.primary,
   secondary: colors.brand[700],
-  outline: colors.text.primary,
+  outline: colors.brand[500],
   ghost: colors.brand[500],
   destructive: colors.text.inverse,
   danger: colors.text.inverse,
