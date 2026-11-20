@@ -1,11 +1,21 @@
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
-import { ActivityIndicator, Image, Pressable, ScrollView, Text, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  Image,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  Text,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { toast } from 'sonner-native';
 
-import { Badge, Button, Card, Input } from '@/components/ui';
+import { Badge, Button, Card, ErrorState, Input } from '@/components/ui';
 import { extractErrorMessage } from '@/lib/api/client';
 import {
   useRiderDocuments,
@@ -13,632 +23,766 @@ import {
   useSubmitForReview,
   useUploadDocument,
 } from '@/lib/api/hooks/useRiderDocuments';
-import { useAuthStore } from '@/lib/auth/authStore';
+import type {
+  ChecklistItem,
+  DocumentType,
+  DocumentsResponse,
+  VehicleInfo,
+  VehicleType,
+} from '@/lib/api/types';
+import {
+  ITEM_STATUS_LABEL,
+  ITEM_STATUS_VARIANT,
+  needsAction,
+  validateExpiry,
+} from '@/lib/onboarding';
 import { colors } from '@/lib/theme';
+import { cn } from '@/lib/utils';
 
-interface DocItem {
-  document_type: string;
-  title: string;
-  status: 'not_submitted' | 'submitted' | 'approved' | 'rejected' | 'expired';
-  document_number?: string | null;
-  expiry_date?: string | null;
-  file_url?: string | null;
-  rejection_reason?: string | null;
+// ───────────────────────────── steps ─────────────────────────────
+
+type StepKey = DocumentType | 'vehicle' | 'review';
+
+const STEPS: { key: StepKey; short: string }[] = [
+  { key: 'iqama', short: 'Iqama' },
+  { key: 'driving_license', short: 'License' },
+  { key: 'vehicle', short: 'Vehicle' },
+  { key: 'vehicle_registration', short: 'Istimara' },
+  { key: 'review', short: 'Review' },
+];
+
+const DOC_COPY: Record<DocumentType, { heading: string; help: string; numberLabel: string; numberHint: string; icon: string }> = {
+  iqama: {
+    heading: 'National ID / Iqama',
+    help: 'Your valid Saudi National ID or resident Iqama.',
+    numberLabel: 'Iqama / National ID number',
+    numberHint: 'e.g. 2498765432',
+    icon: '🪪',
+  },
+  driving_license: {
+    heading: 'Driving License',
+    help: 'A valid license for the vehicle you will deliver with.',
+    numberLabel: 'Driving license number',
+    numberHint: 'e.g. 1098765432',
+    icon: '🚦',
+  },
+  vehicle_registration: {
+    heading: 'Vehicle Registration (Istimara)',
+    help: 'The registration card of the vehicle you entered in the previous step.',
+    numberLabel: 'Istimara number (optional)',
+    numberHint: 'Optional',
+    icon: '📑',
+  },
+};
+
+interface PickedFile {
+  uri: string;
+  name: string;
+  mimeType: string;
 }
 
-export default function DocumentUploadWizardScreen() {
+interface DocDraft {
+  number: string;
+  expiry: string;
+  file: PickedFile | null;
+}
+
+interface VehicleDraft {
+  type: VehicleType | null;
+  plate: string;
+  model: string;
+}
+
+function firstOpenStep(data: DocumentsResponse): number {
+  const byType = new Map(data.checklist.map((d) => [d.document_type, d]));
+  const index = STEPS.findIndex(({ key }) => {
+    if (key === 'review') return true;
+    if (key === 'vehicle') return !data.vehicle_info.is_submitted || data.vehicle_info.status === 'rejected';
+    const item = byType.get(key);
+    return !item || needsAction(item.status);
+  });
+  return Math.max(0, index);
+}
+
+function draftFrom(item: ChecklistItem | undefined): DocDraft {
+  return { number: item?.document_number ?? '', expiry: item?.expiry_date ?? '', file: null };
+}
+
+function vehicleDraftFrom(v: VehicleInfo | undefined): VehicleDraft {
+  return { type: v?.vehicle_type ?? null, plate: v?.vehicle_plate ?? '', model: v?.vehicle_model ?? '' };
+}
+
+function guessMime(name: string): string {
+  const ext = name.split('.').pop()?.toLowerCase();
+  if (ext === 'png') return 'image/png';
+  if (ext === 'webp') return 'image/webp';
+  if (ext === 'heic' || ext === 'heif') return 'image/heic';
+  if (ext === 'pdf') return 'application/pdf';
+  return 'image/jpeg';
+}
+
+// ───────────────────────────── screen ─────────────────────────────
+
+export default function DocumentWizardScreen() {
   const router = useRouter();
-  const { profile } = useAuthStore();
+  const { data, isLoading, isError, refetch } = useRiderDocuments();
+  const uploadMutation = useUploadDocument();
+  const vehicleMutation = useSaveVehicle();
+  const submitMutation = useSubmitForReview();
 
-  const [currentStep, setCurrentStep] = useState<number>(1);
+  const [step, setStep] = useState(0);
+  const [drafts, setDrafts] = useState<Record<DocumentType, DocDraft>>({
+    iqama: draftFrom(undefined),
+    driving_license: draftFrom(undefined),
+    vehicle_registration: draftFrom(undefined),
+  });
+  const [vehicle, setVehicle] = useState<VehicleDraft>(vehicleDraftFrom(undefined));
+  const [errors, setErrors] = useState<Record<string, string | undefined>>({});
+  const [progress, setProgress] = useState<number | null>(null);
+  const scrollRef = useRef<ScrollView>(null);
+  const initialised = useRef(false);
 
-  // TanStack Query Hooks
-  const { data: docsData, isLoading: loadingDocs, refetch } = useRiderDocuments();
-  const uploadDocMutation = useUploadDocument();
-  const saveVehicleMutation = useSaveVehicle();
-  const submitReviewMutation = useSubmitForReview();
-
-  // Step 1: Iqama state
-  const [iqamaNumber, setIqamaNumber] = useState('');
-  const [iqamaExpiry, setIqamaExpiry] = useState('2028-12-31');
-  const [iqamaImage, setIqamaImage] = useState<string | null>(null);
-
-  // Step 2: Driving License state
-  const [licenseNumber, setLicenseNumber] = useState('');
-  const [licenseExpiry, setLicenseExpiry] = useState('2028-12-31');
-  const [licenseImage, setLicenseImage] = useState<string | null>(null);
-
-  // Step 3: Vehicle state
-  const [vehicleType, setVehicleType] = useState<'car' | 'bike'>('car');
-  const [vehiclePlate, setVehiclePlate] = useState('');
-  const [vehicleModel, setVehicleModel] = useState('');
-
-  // Step 4: Istimara state
-  const [istimaraExpiry, setIstimaraExpiry] = useState('2028-12-31');
-  const [istimaraImage, setIstimaraImage] = useState<string | null>(null);
+  // Hydrate once from the server, then resume at the first unfinished step.
+  useEffect(() => {
+    if (!data || initialised.current) return;
+    initialised.current = true;
+    const byType = new Map(data.checklist.map((d) => [d.document_type, d]));
+    setDrafts({
+      iqama: draftFrom(byType.get('iqama')),
+      driving_license: draftFrom(byType.get('driving_license')),
+      vehicle_registration: draftFrom(byType.get('vehicle_registration')),
+    });
+    setVehicle(vehicleDraftFrom(data.vehicle_info));
+    setStep(data.can_edit ? firstOpenStep(data) : STEPS.length - 1);
+  }, [data]);
 
   useEffect(() => {
-    if (docsData) {
-      const docs = docsData.documents || [];
-      const iqama = docs.find((d) => d.type === 'iqama');
-      if (iqama) {
-        setIqamaNumber(iqama.document_number || '');
-        setIqamaExpiry(iqama.expires_at || '2028-12-31');
-        setIqamaImage(iqama.file_url || null);
-      }
+    scrollRef.current?.scrollTo({ y: 0, animated: false });
+  }, [step]);
 
-      const dl = docs.find((d) => d.type === 'driving_license');
-      if (dl) {
-        setLicenseNumber(dl.document_number || '');
-        setLicenseExpiry(dl.expires_at || '2028-12-31');
-        setLicenseImage(dl.file_url || null);
-      }
+  const goToStatus = () => router.replace('/application-status');
 
-      const reg = docs.find((d) => d.type === 'vehicle_registration');
-      if (reg) {
-        setIstimaraExpiry(reg.expires_at || '2028-12-31');
-        setIstimaraImage(reg.file_url || null);
-      }
-
-      if (docsData.driver_profile?.vehicle_type) {
-        setVehicleType(docsData.driver_profile.vehicle_type);
-        setVehiclePlate(docsData.driver_profile.vehicle_plate || '');
-        setVehicleModel(docsData.driver_profile.vehicle_model || '');
-      }
-    }
-  }, [docsData]);
-
-  const pickImage = async (setter: (uri: string) => void) => {
-    try {
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images'],
-        allowsEditing: true,
-        quality: 0.8,
-      });
-
-      if (!result.canceled && result.assets[0]) {
-        setter(result.assets[0].uri);
-      }
-    } catch {
-      toast.error('Could not select image.');
-    }
-  };
-
-  const uploadSingleDoc = async (type: string, number: string | null, expiry: string, localUri: string | null) => {
-    if (!localUri) {
-      toast.error('Please select an image or document file.');
-      return false;
-    }
-
-    const formData = new FormData();
-    formData.append('document_type', type);
-    if (number) formData.append('document_number', number);
-    if (expiry) formData.append('expiry_date', expiry);
-
-    if (localUri.startsWith('file:') || localUri.startsWith('content:')) {
-      const filename = localUri.split('/').pop() || `${type}.jpg`;
-      formData.append('file', {
-        uri: localUri,
-        name: filename,
-        type: 'image/jpeg',
-      } as unknown as Blob);
-    }
-
-    try {
-      await uploadDocMutation.mutateAsync(formData);
-      return true;
-    } catch (err) {
-      toast.error(extractErrorMessage(err));
-      return false;
-    }
-  };
-
-  // Step 1 Save
-  const handleSaveStep1 = async () => {
-    if (!iqamaNumber.trim()) {
-      toast.error('Please enter your National ID / Iqama number');
-      return;
-    }
-    const ok = await uploadSingleDoc('iqama', iqamaNumber, iqamaExpiry, iqamaImage);
-    if (ok) {
-      toast.success('Iqama document saved');
-      setCurrentStep(2);
-    }
-  };
-
-  // Step 2 Save
-  const handleSaveStep2 = async () => {
-    if (!licenseNumber.trim()) {
-      toast.error('Please enter your Driving License number');
-      return;
-    }
-    const ok = await uploadSingleDoc('driving_license', licenseNumber, licenseExpiry, licenseImage);
-    if (ok) {
-      toast.success('Driving License saved');
-      setCurrentStep(3);
-    }
-  };
-
-  // Step 3 Save Vehicle
-  const handleSaveStep3 = async () => {
-    if (!vehiclePlate.trim()) {
-      toast.error('Please enter vehicle plate number');
-      return;
-    }
-    try {
-      await saveVehicleMutation.mutateAsync({
-        vehicle_type: vehicleType,
-        vehicle_plate: vehiclePlate,
-        vehicle_model: vehicleModel || undefined,
-      });
-      toast.success('Vehicle information saved');
-      setCurrentStep(4);
-    } catch (err) {
-      toast.error(extractErrorMessage(err));
-    }
-  };
-
-  // Step 4 Save Istimara
-  const handleSaveStep4 = async () => {
-    const ok = await uploadSingleDoc('vehicle_registration', null, istimaraExpiry, istimaraImage);
-    if (ok) {
-      toast.success('Vehicle registration saved');
-      setCurrentStep(5);
-      refetch();
-    }
-  };
-
-  // Step 5 Final Submission
-  const handleFinalSubmit = async () => {
-    try {
-      await submitReviewMutation.mutateAsync();
-      toast.success('Application submitted for final admin review!');
-      router.replace('/application-status');
-    } catch (err) {
-      toast.error(extractErrorMessage(err));
-    }
-  };
-
-  const isSaving =
-    uploadDocMutation.isPending ||
-    saveVehicleMutation.isPending ||
-    submitReviewMutation.isPending;
-
-  if (loadingDocs) {
+  if (isLoading) {
     return (
       <SafeAreaView className="flex-1 bg-surface items-center justify-center">
         <ActivityIndicator size="large" color={colors.brand[500]} />
-        <Text className="mt-3 text-sm font-semibold text-text-secondary">Loading document requirements...</Text>
+        <Text className="mt-3 text-sm font-semibold text-text-secondary">Loading your documents…</Text>
       </SafeAreaView>
     );
   }
 
+  if (isError || !data) {
+    return (
+      <SafeAreaView className="flex-1 bg-surface items-center justify-center px-6">
+        <ErrorState
+          title="Couldn't load your documents"
+          message="Check your connection and try again."
+          onRetry={() => refetch()}
+        />
+        <Button label="Back to status" variant="outline" className="mt-4" onPress={goToStatus} />
+      </SafeAreaView>
+    );
+  }
+
+  const byType = new Map(data.checklist.map((d) => [d.document_type, d]));
+  const canEdit = data.can_edit;
+  const current = STEPS[step];
+  const busy = uploadMutation.isPending || vehicleMutation.isPending || submitMutation.isPending;
+  const next = () => setStep((s) => Math.min(STEPS.length - 1, s + 1));
+  const back = () => setStep((s) => Math.max(0, s - 1));
+
+  const stepStatus = (key: StepKey) => {
+    if (key === 'review') return null;
+    if (key === 'vehicle') return data.vehicle_info.status;
+    return byType.get(key)?.status ?? 'not_submitted';
+  };
+
+  // ── save handlers ──
+
+  const saveDocument = async (type: DocumentType) => {
+    const item = byType.get(type);
+    const draft = drafts[type];
+    const locked = !canEdit || item?.status === 'approved';
+    const dirty =
+      draft.file !== null ||
+      draft.number.trim() !== (item?.document_number ?? '') ||
+      draft.expiry.trim() !== (item?.expiry_date ?? '');
+
+    // Nothing changed on an item the server already has → just move on.
+    if (locked || (!dirty && item && !needsAction(item.status))) {
+      next();
+      return;
+    }
+
+    const nextErrors: Record<string, string | undefined> = {};
+    if (item?.number_required && !draft.number.trim()) nextErrors.number = 'Document number is required';
+    nextErrors.expiry = validateExpiry(draft.expiry) ?? undefined;
+    if (!draft.file) {
+      nextErrors.file = item?.file_url
+        ? 'Attach the document again to update its details'
+        : 'Please attach a photo of the document';
+    }
+    setErrors(nextErrors);
+    if (Object.values(nextErrors).some(Boolean)) return;
+
+    const form = new FormData();
+    form.append('document_type', type);
+    if (draft.number.trim()) form.append('document_number', draft.number.trim());
+    form.append('expiry_date', draft.expiry.trim());
+    form.append('file', { uri: draft.file!.uri, name: draft.file!.name, type: draft.file!.mimeType } as unknown as Blob);
+
+    setProgress(0);
+    try {
+      const fresh = await uploadMutation.mutateAsync({ formData: form, onProgress: setProgress });
+      const saved = fresh.checklist.find((d) => d.document_type === type);
+      setDrafts((d) => ({ ...d, [type]: draftFrom(saved) }));
+      toast.success(`${DOC_COPY[type].heading} saved`);
+      next();
+    } catch (err) {
+      toast.error(extractErrorMessage(err));
+    } finally {
+      setProgress(null);
+    }
+  };
+
+  const saveVehicle = async () => {
+    const info = data.vehicle_info;
+    const locked = !canEdit || info.status === 'approved';
+    const dirty =
+      vehicle.type !== info.vehicle_type ||
+      vehicle.plate.trim().toUpperCase() !== (info.vehicle_plate ?? '') ||
+      vehicle.model.trim() !== (info.vehicle_model ?? '');
+
+    if (locked || (!dirty && info.is_submitted && info.status !== 'rejected')) {
+      next();
+      return;
+    }
+
+    const nextErrors: Record<string, string | undefined> = {
+      vehicleType: vehicle.type ? undefined : 'Choose car or bike',
+      plate: vehicle.plate.trim().length >= 2 ? undefined : 'Enter your plate number',
+    };
+    setErrors(nextErrors);
+    if (Object.values(nextErrors).some(Boolean)) return;
+
+    try {
+      const res = await vehicleMutation.mutateAsync({
+        vehicle_type: vehicle.type!,
+        vehicle_plate: vehicle.plate.trim(),
+        vehicle_model: vehicle.model.trim() || undefined,
+      });
+      setVehicle(vehicleDraftFrom(res.documents.vehicle_info));
+      toast.success('Vehicle information saved');
+      next();
+    } catch (err) {
+      toast.error(extractErrorMessage(err));
+    }
+  };
+
+  const submit = async () => {
+    try {
+      await submitMutation.mutateAsync();
+      toast.success('Submitted for review');
+      goToStatus();
+    } catch (err) {
+      toast.error(extractErrorMessage(err));
+      refetch();
+    }
+  };
+
+  const pickFile = (type: DocumentType) => {
+    const launch = async (source: 'camera' | 'library') => {
+      try {
+        const perm =
+          source === 'camera'
+            ? await ImagePicker.requestCameraPermissionsAsync()
+            : await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!perm.granted) {
+          toast.error(source === 'camera' ? 'Camera permission is needed.' : 'Photo library permission is needed.');
+          return;
+        }
+        const options: ImagePicker.ImagePickerOptions = { mediaTypes: ['images'], quality: 0.7 };
+        const result =
+          source === 'camera'
+            ? await ImagePicker.launchCameraAsync(options)
+            : await ImagePicker.launchImageLibraryAsync(options);
+        const asset = result.canceled ? null : result.assets[0];
+        if (!asset) return;
+
+        if (asset.fileSize && asset.fileSize > 10 * 1024 * 1024) {
+          toast.error('That file is larger than 10 MB. Please choose a smaller photo.');
+          return;
+        }
+        const name = asset.fileName || asset.uri.split('/').pop() || `${type}.jpg`;
+        setDrafts((d) => ({
+          ...d,
+          [type]: { ...d[type], file: { uri: asset.uri, name, mimeType: asset.mimeType || guessMime(name) } },
+        }));
+        setErrors((e) => ({ ...e, file: undefined }));
+      } catch {
+        toast.error('Could not open the picker.');
+      }
+    };
+
+    Alert.alert('Add document photo', 'Make sure all text is clear and readable.', [
+      { text: 'Take photo', onPress: () => launch('camera') },
+      { text: 'Choose from library', onPress: () => launch('library') },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  };
+
+  // ── render ──
+
   return (
-    <SafeAreaView className="flex-1 bg-surface-muted">
-      {/* Header */}
-      <View className="flex-row items-center justify-between border-b border-border bg-surface px-6 py-4">
-        <View>
-          <Text className="text-xs font-bold uppercase tracking-wider text-text-muted">
-            STAGE 3: DOCUMENT COLLECTION
-          </Text>
+    <SafeAreaView className="flex-1 bg-surface-muted" edges={['top', 'left', 'right']}>
+      <View className="flex-row items-center justify-between border-b border-border bg-surface px-5 py-4">
+        <View className="flex-1 pr-3">
+          <Text className="text-xs font-bold uppercase tracking-wider text-text-muted">Rider documents</Text>
           <Text className="text-xl font-black text-text-primary mt-0.5">
-            Step {currentStep} of 5
+            Step {step + 1} of {STEPS.length}
           </Text>
         </View>
-
         <Pressable
           accessibilityRole="button"
-          onPress={() => router.back()}
+          onPress={goToStatus}
           className="rounded-full bg-surface-muted px-3 py-1.5 border border-border"
         >
-          <Text className="text-xs font-bold text-text-secondary">Save & Exit</Text>
+          <Text className="text-xs font-bold text-text-secondary">{canEdit ? 'Save & exit' : 'Close'}</Text>
         </Pressable>
       </View>
 
-      {/* Progress Bar */}
-      <View className="h-1.5 w-full bg-border flex-row">
-        {[1, 2, 3, 4, 5].map((step) => (
-          <View
-            key={step}
-            className={`flex-1 ${step <= currentStep ? 'bg-brand-500' : 'bg-transparent'}`}
-          />
-        ))}
+      {/* Step pills — tap to jump to any step */}
+      <View className="flex-row gap-1.5 bg-surface px-5 pb-3 pt-1">
+        {STEPS.map((s, i) => {
+          const st = stepStatus(s.key);
+          const color =
+            st === 'approved'
+              ? 'bg-success'
+              : st === 'rejected' || st === 'expired'
+                ? 'bg-danger'
+                : st && st !== 'not_submitted'
+                  ? 'bg-brand-500'
+                  : 'bg-border';
+          return (
+            <Pressable
+              key={s.key}
+              accessibilityRole="button"
+              accessibilityLabel={`Go to ${s.short}`}
+              onPress={() => !busy && setStep(i)}
+              className="flex-1 gap-1"
+            >
+              <View className={cn('h-1.5 rounded-full', color, i === step && 'opacity-100', i !== step && 'opacity-60')} />
+              <Text
+                className={cn('text-[10px] text-center', i === step ? 'font-black text-text-primary' : 'text-text-muted')}
+                numberOfLines={1}
+              >
+                {s.short}
+              </Text>
+            </Pressable>
+          );
+        })}
       </View>
 
-      <ScrollView contentContainerStyle={{ padding: 24, paddingBottom: 48 }}>
-        {/* ================================================================= */}
-        {/* STEP 1: IQAMA / NATIONAL ID                                       */}
-        {/* ================================================================= */}
-        {currentStep === 1 && (
-          <View className="gap-5">
-            <View>
-              <Text className="text-2xl font-bold text-text-primary">1. National ID / Iqama</Text>
-              <Text className="text-sm text-text-secondary mt-1">
-                Provide your valid Saudi National ID or resident Iqama document.
+      <KeyboardAvoidingView className="flex-1" behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <ScrollView
+          ref={scrollRef}
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={{ padding: 20, paddingBottom: 140, gap: 20 }}
+        >
+          {!canEdit ? (
+            <View className="rounded-2xl border border-info/30 bg-info-soft p-4">
+              <Text className="text-sm font-bold text-info">View only</Text>
+              <Text className="text-xs text-text-secondary mt-1">
+                {data.approval_status === 'under_review'
+                  ? 'Your documents are with our team for verification. If something needs fixing, you can edit it here.'
+                  : 'Documents cannot be changed at this stage.'}
               </Text>
             </View>
+          ) : null}
 
-            <Input
-              label="Iqama / National ID Number"
-              placeholder="e.g. 2498765432"
-              value={iqamaNumber}
-              onChangeText={setIqamaNumber}
-              keyboardType="number-pad"
+          {current.key === 'vehicle' ? (
+            <VehicleStep
+              info={data.vehicle_info}
+              draft={vehicle}
+              onChange={(patch) => {
+                setVehicle((v) => ({ ...v, ...patch }));
+                setErrors({});
+              }}
+              readOnly={!canEdit || data.vehicle_info.status === 'approved'}
+              errors={errors}
             />
-
-            <Input
-              label="Expiry Date (YYYY-MM-DD)"
-              placeholder="YYYY-MM-DD"
-              value={iqamaExpiry}
-              onChangeText={setIqamaExpiry}
+          ) : current.key === 'review' ? (
+            <ReviewStep data={data} onEdit={(i) => setStep(i)} />
+          ) : (
+            <DocumentStep
+              type={current.key}
+              item={byType.get(current.key)}
+              draft={drafts[current.key]}
+              onChange={(patch) => {
+                const key = current.key as DocumentType;
+                setDrafts((d) => ({ ...d, [key]: { ...d[key], ...patch } }));
+                setErrors((e) => ({ ...e, ...Object.fromEntries(Object.keys(patch).map((k) => [k, undefined])) }));
+              }}
+              onPick={() => pickFile(current.key as DocumentType)}
+              readOnly={!canEdit || byType.get(current.key)?.status === 'approved'}
+              errors={errors}
+              progress={progress}
             />
+          )}
 
-            {/* Document Photo Upload */}
-            <View className="gap-2">
-              <Text className="text-sm font-semibold text-text-primary">Document Photo</Text>
-              {iqamaImage ? (
-                <View className="rounded-2xl border border-border overflow-hidden bg-black/5 items-center justify-center h-48">
-                  <Image source={{ uri: iqamaImage }} className="h-full w-full" resizeMode="cover" />
-                  <Pressable
-                    onPress={() => pickImage(setIqamaImage)}
-                    className="absolute bottom-3 right-3 rounded-full bg-black/70 px-3 py-1.5"
-                  >
-                    <Text className="text-xs font-bold text-white">Change Photo</Text>
-                  </Pressable>
-                </View>
+          {/* Navigation */}
+          <View className="flex-row gap-3">
+            {step > 0 ? (
+              <Button label="Back" variant="outline" size="lg" className="flex-1" disabled={busy} onPress={back} />
+            ) : null}
+            {current.key === 'review' ? (
+              canEdit ? (
+                <Button
+                  label="Submit for review"
+                  size="lg"
+                  className="flex-[2]"
+                  loading={submitMutation.isPending}
+                  disabled={busy || data.submit_blockers.length > 0}
+                  onPress={submit}
+                />
               ) : (
-                <Pressable
-                  onPress={() => pickImage(setIqamaImage)}
-                  className="rounded-2xl border-2 border-dashed border-border bg-surface p-6 items-center justify-center gap-2"
-                >
-                  <Text className="text-3xl">📄</Text>
-                  <Text className="font-bold text-sm text-brand-500">Upload Iqama Photo</Text>
-                  <Text className="text-xs text-text-muted">Clear photo of the front side (JPEG/PNG)</Text>
-                </Pressable>
-              )}
-            </View>
-
-            <Button
-              label="Save & Continue to License"
-              size="lg"
-              loading={isSaving}
-              onPress={handleSaveStep1}
-              className="mt-4"
-            />
+                <Button label="Back to status" size="lg" className="flex-[2]" onPress={goToStatus} />
+              )
+            ) : (
+              <Button
+                label={canEdit ? 'Save & continue' : 'Next'}
+                size="lg"
+                className="flex-[2]"
+                loading={uploadMutation.isPending || vehicleMutation.isPending}
+                disabled={busy}
+                onPress={() => (current.key === 'vehicle' ? saveVehicle() : saveDocument(current.key as DocumentType))}
+              />
+            )}
           </View>
-        )}
-
-        {/* ================================================================= */}
-        {/* STEP 2: DRIVING LICENSE                                          */}
-        {/* ================================================================= */}
-        {currentStep === 2 && (
-          <View className="gap-5">
-            <View>
-              <Text className="text-2xl font-bold text-text-primary">2. Driving License</Text>
-              <Text className="text-sm text-text-secondary mt-1">
-                Upload your official driving license for your operating vehicle category.
-              </Text>
-            </View>
-
-            <Input
-              label="Driving License Number"
-              placeholder="e.g. LIC-98271"
-              value={licenseNumber}
-              onChangeText={setLicenseNumber}
-            />
-
-            <Input
-              label="Expiry Date (YYYY-MM-DD)"
-              placeholder="YYYY-MM-DD"
-              value={licenseExpiry}
-              onChangeText={setLicenseExpiry}
-            />
-
-            {/* License Photo */}
-            <View className="gap-2">
-              <Text className="text-sm font-semibold text-text-primary">License Photo</Text>
-              {licenseImage ? (
-                <View className="rounded-2xl border border-border overflow-hidden bg-black/5 items-center justify-center h-48">
-                  <Image source={{ uri: licenseImage }} className="h-full w-full" resizeMode="cover" />
-                  <Pressable
-                    onPress={() => pickImage(setLicenseImage)}
-                    className="absolute bottom-3 right-3 rounded-full bg-black/70 px-3 py-1.5"
-                  >
-                    <Text className="text-xs font-bold text-white">Change Photo</Text>
-                  </Pressable>
-                </View>
-              ) : (
-                <Pressable
-                  onPress={() => pickImage(setLicenseImage)}
-                  className="rounded-2xl border-2 border-dashed border-border bg-surface p-6 items-center justify-center gap-2"
-                >
-                  <Text className="text-3xl">🪪</Text>
-                  <Text className="font-bold text-sm text-brand-500">Upload License Photo</Text>
-                  <Text className="text-xs text-text-muted">Valid motorcycle or motor vehicle license</Text>
-                </Pressable>
-              )}
-            </View>
-
-            <View className="flex-row gap-3 mt-4">
-              <Button
-                label="Back"
-                variant="outline"
-                size="lg"
-                onPress={() => setCurrentStep(1)}
-                className="flex-1"
-              />
-              <Button
-                label="Save & Continue"
-                size="lg"
-                loading={isSaving}
-                onPress={handleSaveStep2}
-                className="flex-2"
-              />
-            </View>
-          </View>
-        )}
-
-        {/* ================================================================= */}
-        {/* STEP 3: VEHICLE INFORMATION (CAR VS BIKE ENFORCEMENT)            */}
-        {/* ================================================================= */}
-        {currentStep === 3 && (
-          <View className="gap-5">
-            <View>
-              <Text className="text-2xl font-bold text-text-primary">3. Vehicle Information</Text>
-              <Text className="text-sm text-text-secondary mt-1">
-                Select your delivery vehicle type. This strictly determines your delivery track.
-              </Text>
-            </View>
-
-            {/* Vehicle Selection Cards */}
-            <View className="gap-3">
-              <Pressable
-                onPress={() => setVehicleType('car')}
-                className={`rounded-2xl border p-4.5 ${
-                  vehicleType === 'car' ? 'border-brand-500 bg-brand-50' : 'border-border bg-surface'
-                }`}
-              >
-                <View className="flex-row items-center justify-between">
-                  <View className="flex-row items-center gap-3">
-                    <Text className="text-3xl">🚗</Text>
-                    <View>
-                      <Text className="text-base font-bold text-text-primary">Car / Van</Text>
-                      <Text className="text-xs font-semibold text-brand-500 uppercase tracking-wide">
-                        Catering & Meal Plan Track
-                      </Text>
-                    </View>
-                  </View>
-                  <View
-                    className={`h-5 w-5 rounded-full border items-center justify-center ${
-                      vehicleType === 'car' ? 'border-brand-500 bg-brand-500' : 'border-border bg-white'
-                    }`}
-                  >
-                    {vehicleType === 'car' ? <View className="h-2 w-2 rounded-full bg-white" /> : null}
-                  </View>
-                </View>
-                <Text className="text-xs text-text-secondary mt-2.5 leading-5">
-                  Assigned multi-stop subscription catering runs (10–18 deliveries per run). Thermal bag capacity required.
-                </Text>
-              </Pressable>
-
-              <Pressable
-                onPress={() => setVehicleType('bike')}
-                className={`rounded-2xl border p-4.5 ${
-                  vehicleType === 'bike' ? 'border-brand-500 bg-brand-50' : 'border-border bg-surface'
-                }`}
-              >
-                <View className="flex-row items-center justify-between">
-                  <View className="flex-row items-center gap-3">
-                    <Text className="text-3xl">🏍️</Text>
-                    <View>
-                      <Text className="text-base font-bold text-text-primary">Motorcycle / Scooter</Text>
-                      <Text className="text-xs font-semibold text-info uppercase tracking-wide">
-                        Instant Food Delivery Track
-                      </Text>
-                    </View>
-                  </View>
-                  <View
-                    className={`h-5 w-5 rounded-full border items-center justify-center ${
-                      vehicleType === 'bike' ? 'border-brand-500 bg-brand-500' : 'border-border bg-white'
-                    }`}
-                  >
-                    {vehicleType === 'bike' ? <View className="h-2 w-2 rounded-full bg-white" /> : null}
-                  </View>
-                </View>
-                <Text className="text-xs text-text-secondary mt-2.5 leading-5">
-                  Point-to-point daily walk-in orders. Single pickup and immediate direct delivery.
-                </Text>
-              </Pressable>
-            </View>
-
-            <Input
-              label="Vehicle License Plate Number"
-              placeholder="e.g. 1234-XYZ"
-              value={vehiclePlate}
-              onChangeText={setVehiclePlate}
-              autoCapitalize="characters"
-            />
-
-            <Input
-              label="Vehicle Make & Model (Optional)"
-              placeholder="e.g. Toyota Yaris 2023 or Honda 150"
-              value={vehicleModel}
-              onChangeText={setVehicleModel}
-            />
-
-            <View className="flex-row gap-3 mt-4">
-              <Button
-                label="Back"
-                variant="outline"
-                size="lg"
-                onPress={() => setCurrentStep(2)}
-                className="flex-1"
-              />
-              <Button
-                label="Save & Continue"
-                size="lg"
-                loading={isSaving}
-                onPress={handleSaveStep3}
-                className="flex-2"
-              />
-            </View>
-          </View>
-        )}
-
-        {/* ================================================================= */}
-        {/* STEP 4: ISTIMARA (VEHICLE REGISTRATION)                          */}
-        {/* ================================================================= */}
-        {currentStep === 4 && (
-          <View className="gap-5">
-            <View>
-              <Text className="text-2xl font-bold text-text-primary">4. Vehicle Registration (Istimara)</Text>
-              <Text className="text-sm text-text-secondary mt-1">
-                Upload your valid vehicle registration card / Istimara document.
-              </Text>
-            </View>
-
-            <Input
-              label="Istimara Expiry Date (YYYY-MM-DD)"
-              placeholder="YYYY-MM-DD"
-              value={istimaraExpiry}
-              onChangeText={setIstimaraExpiry}
-            />
-
-            {/* Istimara Photo */}
-            <View className="gap-2">
-              <Text className="text-sm font-semibold text-text-primary">Istimara Document Photo</Text>
-              {istimaraImage ? (
-                <View className="rounded-2xl border border-border overflow-hidden bg-black/5 items-center justify-center h-48">
-                  <Image source={{ uri: istimaraImage }} className="h-full w-full" resizeMode="cover" />
-                  <Pressable
-                    onPress={() => pickImage(setIstimaraImage)}
-                    className="absolute bottom-3 right-3 rounded-full bg-black/70 px-3 py-1.5"
-                  >
-                    <Text className="text-xs font-bold text-white">Change Photo</Text>
-                  </Pressable>
-                </View>
-              ) : (
-                <Pressable
-                  onPress={() => pickImage(setIstimaraImage)}
-                  className="rounded-2xl border-2 border-dashed border-border bg-surface p-6 items-center justify-center gap-2"
-                >
-                  <Text className="text-3xl">📑</Text>
-                  <Text className="font-bold text-sm text-brand-500">Upload Istimara Photo</Text>
-                  <Text className="text-xs text-text-muted">Clear photo of registration card</Text>
-                </Pressable>
-              )}
-            </View>
-
-            <View className="flex-row gap-3 mt-4">
-              <Button
-                label="Back"
-                variant="outline"
-                size="lg"
-                onPress={() => setCurrentStep(3)}
-                className="flex-1"
-              />
-              <Button
-                label="Save & Review"
-                size="lg"
-                loading={isSaving}
-                onPress={handleSaveStep4}
-                className="flex-2"
-              />
-            </View>
-          </View>
-        )}
-
-        {/* ================================================================= */}
-        {/* STEP 5: REVIEW & FINAL SUBMISSION                                */}
-        {/* ================================================================= */}
-        {currentStep === 5 && (
-          <View className="gap-5">
-            <View>
-              <Text className="text-2xl font-bold text-text-primary">5. Review & Submit</Text>
-              <Text className="text-sm text-text-secondary mt-1">
-                Review your uploaded documents and vehicle information before final submission.
-              </Text>
-            </View>
-
-            {/* Checklist summary cards */}
-            <Card className="gap-3.5 bg-surface">
-              <Text className="text-xs font-bold uppercase tracking-wider text-text-muted">
-                DOCUMENT STATUS CHECKLIST
-              </Text>
-
-              {(docsData?.documents || []).map((item) => (
-                <View
-                  key={item.id}
-                  className="flex-row items-center justify-between border-b border-border pb-3 last:border-b-0"
-                >
-                  <View className="flex-1 pr-3">
-                    <Text className="font-bold text-sm text-text-primary">
-                      {item.type.replace('_', ' ').toUpperCase()}
-                    </Text>
-                    {item.rejection_reason ? (
-                      <Text className="text-xs font-medium text-danger mt-0.5">
-                        • Rejection: {item.rejection_reason}
-                      </Text>
-                    ) : item.expires_at ? (
-                      <Text className="text-xs text-text-muted mt-0.5">
-                        Expires: {item.expires_at}
-                      </Text>
-                    ) : null}
-                  </View>
-
-                  <Badge
-                    label={
-                      item.status === 'approved'
-                        ? 'Approved'
-                        : item.status === 'rejected'
-                        ? 'Rejected'
-                        : item.status === 'submitted'
-                        ? 'Uploaded'
-                        : 'Missing'
-                    }
-                    variant={
-                      item.status === 'approved'
-                        ? 'success'
-                        : item.status === 'rejected'
-                        ? 'danger'
-                        : item.status === 'submitted'
-                        ? 'brand'
-                        : 'warning'
-                    }
-                  />
-                </View>
-              ))}
-
-              <View className="border-t border-border pt-3 flex-row items-center justify-between">
-                <View>
-                  <Text className="font-bold text-sm text-text-primary">Assigned Vehicle</Text>
-                  <Text className="text-xs text-text-secondary mt-0.5">
-                    {vehicleType === 'car' ? 'Car (Catering Batches)' : 'Bike (Instant Orders)'} · {vehiclePlate}
-                  </Text>
-                </View>
-                <Badge label={vehicleType.toUpperCase()} variant="brand" />
-              </View>
-            </Card>
-
-            <View className="flex-row gap-3 mt-4">
-              <Button
-                label="Edit Documents"
-                variant="outline"
-                size="lg"
-                onPress={() => setCurrentStep(1)}
-                className="flex-1"
-              />
-              <Button
-                label="Submit for Final Review"
-                size="lg"
-                loading={isSaving}
-                onPress={handleFinalSubmit}
-                className="flex-2"
-              />
-            </View>
-          </View>
-        )}
-      </ScrollView>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
+  );
+}
+
+// ───────────────────────────── document step ─────────────────────────────
+
+function StatusLine({ status, reason, lockedNote }: { status: ChecklistItem['status']; reason?: string | null; lockedNote?: string }) {
+  return (
+    <View className="gap-2">
+      <Badge label={ITEM_STATUS_LABEL[status]} variant={ITEM_STATUS_VARIANT[status]} />
+      {status === 'rejected' && reason ? (
+        <View className="rounded-xl border border-danger/30 bg-danger-soft p-3">
+          <Text className="text-xs font-bold uppercase text-danger">Rejected by admin</Text>
+          <Text className="mt-1 text-sm text-danger">{reason}</Text>
+          <Text className="mt-1 text-xs text-text-secondary">Upload a new copy below — your other documents stay as they are.</Text>
+        </View>
+      ) : null}
+      {status === 'expired' ? (
+        <View className="rounded-xl border border-warning/30 bg-warning-soft p-3">
+          <Text className="text-sm text-warning font-semibold">This document has expired. Upload a valid copy.</Text>
+        </View>
+      ) : null}
+      {lockedNote ? <Text className="text-xs text-text-muted">🔒 {lockedNote}</Text> : null}
+    </View>
+  );
+}
+
+function DocumentStep({
+  type,
+  item,
+  draft,
+  onChange,
+  onPick,
+  readOnly,
+  errors,
+  progress,
+}: {
+  type: DocumentType;
+  item?: ChecklistItem;
+  draft: DocDraft;
+  onChange: (patch: Partial<DocDraft>) => void;
+  onPick: () => void;
+  readOnly: boolean;
+  errors: Record<string, string | undefined>;
+  progress: number | null;
+}) {
+  const copy = DOC_COPY[type];
+  const status = item?.status ?? 'not_submitted';
+  const previewUri = draft.file?.uri ?? (item?.file_url && !item.file_is_pdf ? item.file_url : null);
+  const hasFile = Boolean(draft.file || item?.file_url);
+
+  return (
+    <View className="gap-5">
+      <View>
+        <Text className="text-2xl font-bold text-text-primary">
+          {copy.icon} {copy.heading}
+        </Text>
+        <Text className="text-sm text-text-secondary mt-1">{copy.help}</Text>
+      </View>
+
+      <StatusLine
+        status={status}
+        reason={item?.rejection_reason}
+        lockedNote={status === 'approved' ? 'Approved documents are locked.' : undefined}
+      />
+
+      <Input
+          label={copy.numberLabel}
+          placeholder={copy.numberHint}
+          value={draft.number}
+          onChangeText={(number) => onChange({ number })}
+          editable={!readOnly}
+          autoCapitalize="characters"
+          error={errors.number}
+        />
+
+      <Input
+        label="Expiry date"
+        placeholder="YYYY-MM-DD"
+        value={draft.expiry}
+        onChangeText={(expiry) => onChange({ expiry })}
+        editable={!readOnly}
+        keyboardType="numbers-and-punctuation"
+        maxLength={10}
+        hint="Must be valid after today"
+        error={errors.expiry}
+      />
+
+      <View className="gap-2">
+        <Text className="text-sm font-semibold text-text-primary">Document photo</Text>
+        {hasFile ? (
+          <View className="h-52 overflow-hidden rounded-2xl border border-border bg-black/5 items-center justify-center">
+            {previewUri ? (
+              <Image source={{ uri: previewUri }} className="h-full w-full" resizeMode="cover" />
+            ) : (
+              <Text className="text-sm font-semibold text-text-secondary">📄 PDF document on file</Text>
+            )}
+            {draft.file ? (
+              <View className="absolute left-3 top-3 rounded-full bg-brand-500 px-2.5 py-1">
+                <Text className="text-[10px] font-bold text-text-primary">NEW — not uploaded yet</Text>
+              </View>
+            ) : null}
+            {!readOnly ? (
+              <Pressable onPress={onPick} className="absolute bottom-3 right-3 rounded-full bg-black/70 px-3 py-1.5">
+                <Text className="text-xs font-bold text-white">Replace</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        ) : (
+          <Pressable
+            onPress={readOnly ? undefined : onPick}
+            className={cn(
+              'items-center justify-center gap-2 rounded-2xl border-2 border-dashed bg-surface p-6',
+              errors.file ? 'border-danger' : 'border-border',
+            )}
+          >
+            <Text className="text-3xl">📷</Text>
+            <Text className="font-bold text-sm text-brand-700">Take or choose a photo</Text>
+            <Text className="text-xs text-text-muted">Clear, readable, all four corners visible</Text>
+          </Pressable>
+        )}
+        {errors.file ? <Text className="text-xs font-medium text-danger">{errors.file}</Text> : null}
+
+        {progress !== null ? (
+          <View className="gap-1">
+            <View className="h-2 overflow-hidden rounded-full bg-border">
+              <View className="h-full bg-brand-500" style={{ width: `${Math.round(progress * 100)}%` }} />
+            </View>
+            <Text className="text-xs text-text-secondary">Uploading… {Math.round(progress * 100)}%</Text>
+          </View>
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
+// ───────────────────────────── vehicle step ─────────────────────────────
+
+const VEHICLES: { type: VehicleType; icon: string; title: string; track: string; body: string }[] = [
+  {
+    type: 'car',
+    icon: '🚗',
+    title: 'Car / Van',
+    track: 'Plan / subscription deliveries only',
+    body: 'Multi-stop meal-plan routes. You will not receive instant daily orders.',
+  },
+  {
+    type: 'bike',
+    icon: '🏍️',
+    title: 'Motorcycle / Scooter',
+    track: 'Regular / daily deliveries only',
+    body: 'Instant point-to-point orders. You will not receive subscription routes.',
+  },
+];
+
+function VehicleStep({
+  info,
+  draft,
+  onChange,
+  readOnly,
+  errors,
+}: {
+  info: VehicleInfo;
+  draft: VehicleDraft;
+  onChange: (patch: Partial<VehicleDraft>) => void;
+  readOnly: boolean;
+  errors: Record<string, string | undefined>;
+}) {
+  return (
+    <View className="gap-5">
+      <View>
+        <Text className="text-2xl font-bold text-text-primary">🛞 Vehicle information</Text>
+        <Text className="text-sm text-text-secondary mt-1">Your vehicle decides which deliveries you can receive.</Text>
+      </View>
+
+      <StatusLine
+        status={info.status}
+        reason={info.rejection_reason}
+        lockedNote={info.status === 'approved' ? 'Approved vehicle information is locked.' : undefined}
+      />
+
+      <View className="gap-3">
+        {VEHICLES.map((v) => {
+          const selected = draft.type === v.type;
+          return (
+            <Pressable
+              key={v.type}
+              accessibilityRole="radio"
+              accessibilityState={{ selected, disabled: readOnly }}
+              onPress={readOnly ? undefined : () => onChange({ type: v.type })}
+              className={cn(
+                'rounded-2xl border p-4',
+                selected ? 'border-brand-500 bg-brand-50' : 'border-border bg-surface',
+                readOnly && !selected && 'opacity-50',
+              )}
+            >
+              <View className="flex-row items-center justify-between">
+                <View className="flex-row items-center gap-3 flex-1">
+                  <Text className="text-3xl">{v.icon}</Text>
+                  <View className="flex-1">
+                    <Text className="text-base font-bold text-text-primary">{v.title}</Text>
+                    <Text className="text-xs font-semibold uppercase tracking-wide text-brand-700">{v.track}</Text>
+                  </View>
+                </View>
+                <View
+                  className={cn(
+                    'h-5 w-5 rounded-full border items-center justify-center',
+                    selected ? 'border-brand-500 bg-brand-500' : 'border-border bg-white',
+                  )}
+                >
+                  {selected ? <View className="h-2 w-2 rounded-full bg-white" /> : null}
+                </View>
+              </View>
+              <Text className="text-xs text-text-secondary mt-2.5 leading-5">{v.body}</Text>
+            </Pressable>
+          );
+        })}
+        {errors.vehicleType ? <Text className="text-xs font-medium text-danger">{errors.vehicleType}</Text> : null}
+      </View>
+
+      <Input
+        label="Plate number"
+        placeholder="e.g. 1234 ABC"
+        value={draft.plate}
+        onChangeText={(plate) => onChange({ plate })}
+        autoCapitalize="characters"
+        editable={!readOnly}
+        error={errors.plate}
+      />
+
+      <Input
+        label="Make & model (optional)"
+        placeholder="e.g. Toyota Yaris 2023 or Honda PCX 150"
+        value={draft.model}
+        onChangeText={(model) => onChange({ model })}
+        editable={!readOnly}
+      />
+    </View>
+  );
+}
+
+// ───────────────────────────── review step ─────────────────────────────
+
+function ReviewStep({ data, onEdit }: { data: DocumentsResponse; onEdit: (step: number) => void }) {
+  const stepOf = (key: StepKey) => STEPS.findIndex((s) => s.key === key);
+  const v = data.vehicle_info;
+
+  const rows: { key: StepKey; title: string; detail: string | null; status: ChecklistItem['status']; reason?: string | null }[] = [
+    ...data.checklist
+      .filter((d) => d.document_type !== 'vehicle_registration')
+      .map((d) => ({
+        key: d.document_type as StepKey,
+        title: d.title,
+        detail: d.expiry_date ? `Expires ${d.expiry_date}` : null,
+        status: d.status,
+        reason: d.rejection_reason,
+      })),
+    {
+      key: 'vehicle',
+      title: 'Vehicle information',
+      detail: v.vehicle_type ? `${v.vehicle_type === 'car' ? 'Car · plan deliveries' : 'Bike · daily deliveries'} · ${v.vehicle_plate ?? ''}` : null,
+      status: v.status,
+      reason: v.rejection_reason,
+    },
+    ...data.checklist
+      .filter((d) => d.document_type === 'vehicle_registration')
+      .map((d) => ({
+        key: d.document_type as StepKey,
+        title: d.title,
+        detail: d.expiry_date ? `Expires ${d.expiry_date}` : null,
+        status: d.status,
+        reason: d.rejection_reason,
+      })),
+  ];
+
+  return (
+    <View className="gap-5">
+      <View>
+        <Text className="text-2xl font-bold text-text-primary">✅ Review & submit</Text>
+        <Text className="text-sm text-text-secondary mt-1">
+          Check everything below. Once submitted, an admin verifies each item individually.
+        </Text>
+      </View>
+
+      <Card className="gap-0 p-0 overflow-hidden">
+        {rows.map((row, i) => (
+          <Pressable
+            key={row.key}
+            accessibilityRole="button"
+            onPress={() => onEdit(stepOf(row.key))}
+            className={cn('flex-row items-center gap-3 p-4 active:bg-surface-muted', i > 0 && 'border-t border-border')}
+          >
+            <View className="flex-1">
+              <Text className="text-sm font-bold text-text-primary">{row.title}</Text>
+              {row.status === 'rejected' && row.reason ? (
+                <Text className="text-xs text-danger mt-0.5">{row.reason}</Text>
+              ) : row.detail ? (
+                <Text className="text-xs text-text-muted mt-0.5">{row.detail}</Text>
+              ) : null}
+            </View>
+            <Badge label={ITEM_STATUS_LABEL[row.status]} variant={ITEM_STATUS_VARIANT[row.status]} />
+            <Text className="text-text-muted">›</Text>
+          </Pressable>
+        ))}
+      </Card>
+
+      {data.can_edit && data.submit_blockers.length > 0 ? (
+        <View className="rounded-2xl border border-warning/30 bg-warning-soft p-4 gap-1">
+          <Text className="text-sm font-bold text-warning">Before you can submit</Text>
+          {data.submit_blockers.map((b) => (
+            <Text key={b} className="text-xs text-text-secondary">
+              • {b}
+            </Text>
+          ))}
+        </View>
+      ) : null}
+
+      {data.can_edit && data.submit_blockers.length === 0 ? (
+        <Text className="text-xs text-text-secondary text-center">
+          Everything is ready. Submit to send your application for final verification.
+        </Text>
+      ) : null}
+    </View>
   );
 }

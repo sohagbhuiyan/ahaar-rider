@@ -22,6 +22,7 @@ import {
 } from 'react';
 import {
   BackHandler,
+  Keyboard,
   Platform,
   Text,
   View,
@@ -53,6 +54,7 @@ interface Props {
 
 const MAX_HEIGHT_RATIO = 0.9;
 const LAYOUT_SETTLE_MS = 100;
+const KEYBOARD_SETTLE_MS = 60;
 
 const SHEET_BACKGROUND = {
   backgroundColor: colors.surface.DEFAULT,
@@ -139,6 +141,13 @@ export function Sheet({
     setFooterHeight(Math.round(event.nativeEvent.layout.height));
   }, []);
 
+  // How much of the scroll viewport sits behind the keyboard. A tall sheet is
+  // pushed up by the keyboard only until it hits the top inset; the rest of it
+  // stays under the keyboard while the scroll view keeps its full height, so
+  // without this the last fields can never be scrolled into view.
+  const [keyboardOverlap, setKeyboardOverlap] = useState(0);
+  const keyboardOverlapRef = useRef(0);
+
   const revealFocusedField = useCallback(() => {
     const field = focusedFieldRef.current;
     const content = contentRef.current;
@@ -149,11 +158,51 @@ export function Sheet({
         fieldTop: y,
         fieldHeight: height,
         scrollOffset: scrollOffsetRef.current,
-        visibleHeight: viewportHeightRef.current - (hasFooter ? footerHeight : 0),
+        visibleHeight:
+          viewportHeightRef.current -
+          (hasFooter ? footerHeight : 0) -
+          keyboardOverlapRef.current,
       });
       if (offset !== null) scrollRef.current?.scrollTo({ y: offset, animated: true });
     });
   }, [hasFooter, footerHeight]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    let measureTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const applyOverlap = (next: number) => {
+      keyboardOverlapRef.current = next;
+      setKeyboardOverlap(next);
+      // Let the new bottom padding land before scrolling the field into view.
+      setTimeout(revealFocusedField, 16);
+    };
+
+    const showSub = Keyboard.addListener('keyboardDidShow', (event) => {
+      const keyboardTop = event.endCoordinates.screenY;
+      clearTimeout(measureTimer);
+      // The sheet animates alongside the keyboard; measure once it has settled.
+      measureTimer = setTimeout(() => {
+        contentRef.current?.measureInWindow((_x, contentY) => {
+          const viewportBottom = contentY + scrollOffsetRef.current + viewportHeightRef.current;
+          applyOverlap(Math.max(0, Math.round(viewportBottom - keyboardTop)));
+        });
+      }, KEYBOARD_SETTLE_MS);
+    });
+    const hideSub = Keyboard.addListener('keyboardDidHide', () => {
+      clearTimeout(measureTimer);
+      applyOverlap(0);
+    });
+
+    return () => {
+      clearTimeout(measureTimer);
+      showSub.remove();
+      hideSub.remove();
+      keyboardOverlapRef.current = 0;
+      setKeyboardOverlap(0);
+    };
+  }, [open, revealFocusedField]);
 
   const sheetContext = useMemo<SheetContextValue>(
     () => ({
@@ -239,7 +288,7 @@ export function Sheet({
         onScroll={handleScroll}
         onLayout={handleScrollLayout}
         contentContainerStyle={{
-          paddingBottom: hasFooter ? footerHeight + 16 : insets.bottom + 16,
+          paddingBottom: (hasFooter ? footerHeight + 16 : insets.bottom + 16) + keyboardOverlap,
         }}
       >
         <SheetContext.Provider value={sheetContext}>

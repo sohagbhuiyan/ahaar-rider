@@ -32,7 +32,7 @@ export default function ProfileScreen() {
   const logoutMutation = useLogout();
 
   const activeProfile = meData?.driver_profile || profile;
-  const documents = docsData?.documents || [];
+  const documents = (docsData?.checklist ?? []).filter((d) => d.status !== 'not_submitted');
 
   const onRefresh = async () => {
     await Promise.all([refetchMe(), refetchDocs()]);
@@ -58,13 +58,6 @@ export default function ProfileScreen() {
 
   const isCar = activeProfile?.vehicle_type === 'car';
 
-  const docTitleMap: Record<string, string> = {
-    iqama: 'National ID / Iqama',
-    driving_license: 'Driving License',
-    vehicle_registration: 'Istimara (Vehicle Registration)',
-    food_handler_certificate: 'Food Safety Certificate',
-  };
-
   return (
     <SafeAreaView className="flex-1 bg-surface-muted" edges={['top']}>
       {/* Top Header */}
@@ -88,7 +81,7 @@ export default function ProfileScreen() {
       >
         <View className="gap-5">
           {/* Identity Card */}
-          <Card className="p-5 bg-brand-500 border-none">
+          <Card className="p-5 bg-brand-700 border-none">
             <View className="flex-row items-center">
               <View className="h-16 w-16 rounded-2xl bg-white/20 border border-white/30 items-center justify-center">
                 <Text className="text-2xl font-black text-white">
@@ -188,7 +181,7 @@ export default function ProfileScreen() {
 
                   return (
                     <View
-                      key={doc.id}
+                      key={doc.document_type}
                       className={`p-3.5 rounded-xl border ${
                         isApproved
                           ? 'border-success/30 bg-success-soft/30'
@@ -202,22 +195,22 @@ export default function ProfileScreen() {
                       <View className="flex-row items-start justify-between">
                         <View className="flex-1 mr-2">
                           <Text className="font-bold text-sm text-text-primary">
-                            {docTitleMap[doc.type] || doc.type}
+                            {doc.title}
                           </Text>
                           {doc.document_number && (
                             <Text className="text-xs font-mono text-text-secondary mt-0.5">
                               #{doc.document_number}
                             </Text>
                           )}
-                          {doc.expires_at && (
+                          {doc.expiry_date && (
                             <Text className="text-[11px] text-text-muted mt-0.5">
-                              Expires: {doc.expires_at}
+                              Expires: {doc.expiry_date}
                             </Text>
                           )}
                         </View>
 
                         <Badge
-                          label={doc.status.toUpperCase()}
+                          label={doc.status.replace('_', ' ').toUpperCase()}
                           variant={
                             isApproved
                               ? 'success'

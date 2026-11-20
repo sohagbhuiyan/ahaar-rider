@@ -65,60 +65,80 @@ The system must support all three AHAAR branches. All operational data is partit
 
 ```mermaid
 flowchart TD
-    S1["Stage 1: Basic Rider Registration\n• Name, Phone, Email, Password, Branch\n• (NO sensitive docs collected yet)"] --> S2["Status: PENDING_INITIAL_APPROVAL"]
-    S2 --> S3{"Stage 2: Initial Admin Review"}
-    S3 -- Rejected --> S4["Status: REJECTED\n(Shows rejection reason to rider)"]
-    S3 -- Approved --> S5["Status: APPROVED_FOR_DOCUMENTS\n(Unlocks Document Collection)"]
-    S5 --> S6["Stage 3: Step-by-Step Document Collection\n1. Iqama / ID Document\n2. Driving License\n3. Vehicle Choice: Car vs Bike & Plate\n4. Istimara (Vehicle Registration)"]
-    S6 --> S7["Status: UNDER_REVIEW"]
-    S7 --> S8{"Stage 4: Admin Document Verification\n(Reviews each doc individually)"}
-    S8 -- Single Doc Rejected --> S9["Rider replaces ONLY rejected doc"]
-    S9 --> S7
-    S8 -- All Docs Approved --> S10["Stage 5: Final Rider Activation\n• Status: APPROVED\n• Can go ONLINE & receive deliveries"]
+    S1["Stage 1: Basic Registration\nName, Phone, Email, Password, Branch\n(NO sensitive documents)"] --> P["pending_initial_approval"]
+    P -->|"Admin rejects (reason required)"| R["rejected\nrider sees reason"]
+    R -->|"Admin reconsiders"| D
+    P -->|"Admin approves"| D["approved_for_documents\nStage 3 unlocked"]
+    D -->|"Rider submits: all docs + vehicle provided"| U["under_review\nrider's items locked"]
+    U -->|"Admin rejects ONE document / vehicle"| D
+    U -->|"Every activation check passes, admin activates"| A["approved\nfully verified, may go online"]
+    A -->|"Admin rejects a document"| D
+    ANY["any status"] -->|"Admin suspends (reason required)"| S["suspended\nforced offline"]
+    S -->|"Admin reinstates"| BACK["status derived from progress"]
 ```
 
+### 3.0 Two different approvals — never confuse them
+| Concept | Meaning | Stored as |
+|---|---|---|
+| `registration_approved` | Stage 2 passed; the rider may submit documents | `driver_profiles.initial_approved_at` (+ `initial_approved_by`) |
+| `fully_verified` | Stage 5 passed; the rider is activated | `driver_profiles.approval_status = 'approved'` |
+
+A rider can be `registration_approved` for weeks without being `fully_verified`.
+
 ### 3.1 Stage 1 — Basic Rider Registration
-* Initial registration collects **only basic identity credentials**:
-  - Full Name
-  - Phone Number
-  - Email Address
-  - Password / Confirmation
-  - Assigned Branch selection
-  - Profile photo (optional)
-* **CRITICAL:** Do NOT request Iqama, Driving License, or Istimara during initial sign-up.
-* Rider profile is created with `approval_status = 'pending_initial_approval'`.
+* Collects **only**: Full Name, Phone Number, Email, Password + confirmation, Operating Branch.
+* **Do NOT** request Iqama, Driving License, Istimara or any other document at sign-up. The API rejects document uploads until Stage 2 is approved.
+* The profile is created with `approval_status = 'pending_initial_approval'` and appears immediately in the Admin → Operations → Riders queue under **Needs review**.
 
 ### 3.2 Stage 2 — Initial Admin Verification
-* Admin reviews basic profile details.
-* Actions available:
-  - **Approve:** Transitions rider to `approved_for_documents`, unlocking Stage 3 in the Rider App.
-  - **Reject:** Transitions rider to `rejected` with a mandatory rejection explanation.
-  - **Suspend:** Temporarily freezes account.
+* The admin reviews name, phone, email and branch.
+* **Approve** → `approved_for_documents`, unlocking Stage 3 in the Rider App. Approver and time are recorded.
+* **Reject** → `rejected`, with a **mandatory** reason that the rider sees in the app. An admin may later approve a rejected rider.
+* **Suspend** → `suspended`, with a **mandatory** reason; available at any stage and forces the rider offline.
+* **Reinstate** → lifts a suspension. The new status comes from the rider's progress (`pending_initial_approval`, `approved_for_documents`, `under_review`, or `approved` only if they had already been activated before). Reinstating never skips Stage 5.
 
 ### 3.3 Stage 3 — Guided Step-by-Step Document Collection
-Once unlocked, the Rider App guides the candidate through structured submission:
-1. **Iqama / Identity Document:** ID number, expiration date, photo/document upload.
-2. **Driving License:** License number, expiration date, photo/document upload.
-3. **Vehicle Information:** Selection of **Bike** or **Car** (enforcing catering vs instant delivery rule), vehicle plate number, model, and year.
-4. **Istimara (Vehicle Registration):** Registration document upload and expiration date.
-* *Progress Preservation:* Draft submissions are stored on the backend so riders can complete steps across multiple sessions.
-* Once all steps are completed and submitted, profile status becomes `under_review`.
+Only while `approval_status = 'approved_for_documents'`. The Rider App guides the rider through:
+1. **Iqama / Identity Document** — number (required), expiry date (required, future), photo or PDF.
+2. **Driving License** — number (required), expiry date (required, future), photo or PDF.
+3. **Vehicle Information** — **Bike** or **Car**, plate (required), model (optional).
+4. **Istimara / Vehicle Registration** — expiry date (required, future), photo or PDF.
+5. **Review & Submit.**
+* Files: jpeg / png / webp / heic / pdf, max 10 MB.
+* *Progress is saved per item on the server*; the rider can leave and resume at the first unfinished step.
+* **Submit for review** is refused while any document is missing, rejected or expired, or the vehicle is missing or rejected; the API returns the exact list (`submit_blockers`).
+* After submission the status becomes `under_review` and the rider's items are locked.
 
-### 3.4 Stage 4 — Individual Admin Document Review
-* Admin reviews each uploaded document individually:
-  - `Document Statuses`: `submitted`, `approved`, `rejected`, `expired`.
-* If a document is rejected, Admin specifies a rejection reason (e.g. *"Image is blurry; please re-upload clear front side"*).
-* The rider is notified and can replace and resubmit **only the rejected document** without repeating the other steps.
+### 3.4 Stage 4 — Individual Admin Verification
+* The admin approves or rejects **each document and the vehicle information separately**. A rejection reason is **mandatory**.
+* Document status lifecycle:
+
+| Status | Meaning |
+|---|---|
+| `not_submitted` | No file yet |
+| `submitted` | Uploaded, rider hasn't submitted the application yet |
+| `under_review` | Uploaded and the application is with the admin |
+| `approved` | Accepted by an admin (locked for the rider) |
+| `rejected` | Refused with a reason; the rider must replace it |
+| `expired` | Expiry date has passed; it no longer counts as approved |
+
+* A rejection sends the rider back to `approved_for_documents` and offline. **Only the rejected item** has to be replaced; approved items stay approved and cannot be overwritten. The rider then submits again.
 
 ### 3.5 Stage 5 — Final Rider Activation & Eligibility Guard
-The rider is granted full delivery authorization (`approval_status = 'approved'`) **only when all of the following conditions are met**:
-1. Initial basic registration was approved.
-2. All mandatory documents are approved by Admin.
-3. No document has expired (`expiry_date > now()`).
-4. Vehicle information has been validated.
-5. The account is active and not suspended.
+An admin can activate (`approval_status = 'approved'`) **only** when every check passes. The checks are computed in Laravel (`DriverProfile::activationChecks()`), not only in the UI:
+1. Initial registration approved.
+2. All mandatory documents (Iqama, Driving License, Istimara) approved.
+3. No mandatory document expired.
+4. Vehicle information approved.
+5. Operating branch assigned.
+6. User account active and the rider is not suspended or rejected.
 
-*Backend Enforcement:* The Laravel API enforces these rules on `POST /api/v1/rider/status` (online toggle). If any condition is violated, the rider is barred from toggling online.
+A rider can go **online** (`POST /api/v1/rider/status`) only when `approval_status = 'approved'` **and** all six checks still pass (`DriverProfile::canGoOnline()`). An expired document therefore blocks going online immediately, even for an activated rider.
+
+### 3.6 Approval History & Audit Log
+* Every step is written to the existing `activity_log` table (log name `rider_onboarding`, subject = the driver profile, causer = the admin or rider): registered, registration approved/rejected, document uploaded/replaced, vehicle saved, submitted for review, document/vehicle approved/rejected, returned to rider, activated, suspended, reinstated, each with from/to status and reason.
+* The admin review sheet shows this history as a timeline.
+* All transitions live in one service, `App\Services\Rider\RiderOnboarding`. Controllers must not change `approval_status` directly.
 
 ---
 

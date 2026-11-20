@@ -8,6 +8,7 @@ import { RegisterSheet } from '@/components/auth/RegisterSheet';
 import { Button } from '@/components/ui';
 import { useRiderMe } from '@/lib/api/hooks/useRiderAuth';
 import { useAuthStore } from '@/lib/auth/authStore';
+import { routeForStatus } from '@/lib/onboarding';
 import { colors } from '@/lib/theme';
 
 export default function WelcomeGatewayScreen() {
@@ -29,13 +30,7 @@ export default function WelcomeGatewayScreen() {
 
   useEffect(() => {
     if (!isLoading && token && activeProfile) {
-      if (activeProfile.approval_status === 'approved') {
-        router.replace('/(tabs)');
-      } else if (activeProfile.approval_status === 'approved_for_documents') {
-        router.replace('/document-upload');
-      } else {
-        router.replace('/application-status');
-      }
+      router.replace(routeForStatus(activeProfile.approval_status));
     }
   }, [isLoading, token, activeProfile, router]);
 

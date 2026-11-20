@@ -8,6 +8,7 @@ import { z } from 'zod';
 
 import { Button, Input, PasswordInput, Sheet } from '@/components/ui';
 import { extractErrorMessage } from '@/lib/api/client';
+import { routeForStatus } from '@/lib/onboarding';
 import { useLogin } from '@/lib/api/hooks/useRiderAuth';
 
 const schema = z.object({
@@ -49,14 +50,7 @@ export function LoginSheet({ open, onClose, onOpenRegister }: Props) {
         handleClose();
 
         // Route according to 5-stage approval status
-        const status = data.driver_profile.approval_status;
-        if (status === 'approved') {
-          router.replace('/(tabs)');
-        } else if (status === 'approved_for_documents') {
-          router.replace('/document-upload');
-        } else {
-          router.replace('/application-status');
-        }
+        router.replace(routeForStatus(data.driver_profile.approval_status));
       },
       onError: (err) => {
         setErrorMsg(extractErrorMessage(err) || 'Invalid phone, email or password.');

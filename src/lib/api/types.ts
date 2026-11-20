@@ -15,35 +15,75 @@ export type ApprovalStatus =
   | 'suspended'
   | 'expired_documents';
 
+export type VehicleType = 'car' | 'bike';
+
 export interface DriverProfileState {
   id: number;
   branch_id?: number | null;
   branch_name?: string | null;
-  vehicle_type?: 'car' | 'bike' | null;
+  vehicle_type?: VehicleType | null;
   vehicle_plate?: string | null;
   vehicle_model?: string | null;
+  vehicle_status?: 'not_submitted' | 'submitted' | 'approved' | 'rejected';
   approval_status: ApprovalStatus;
   rejection_reason?: string | null;
+  /** Stage 2 passed (may collect documents) — NOT the same as fully_verified. */
+  registration_approved?: boolean;
+  /** Stage 5 passed (activated by admin). */
+  fully_verified?: boolean;
+  initial_approved_at?: string | null;
+  submitted_for_review_at?: string | null;
+  /** An admin rejected a document or the vehicle; the rider must replace it. */
+  action_required?: boolean;
   is_active: boolean;
   is_busy: boolean;
   can_go_online?: boolean;
 }
 
-export interface DriverDocumentItem {
-  id: number;
-  type: string;
-  document_number?: string;
-  file_url: string;
-  expires_at?: string;
-  status: 'submitted' | 'approved' | 'rejected' | 'expired';
-  rejection_reason?: string | null;
+export type DocumentType = 'iqama' | 'driving_license' | 'vehicle_registration';
+
+export type ItemStatus =
+  | 'not_submitted'
+  | 'submitted'
+  | 'under_review'
+  | 'approved'
+  | 'rejected'
+  | 'expired';
+
+export interface ChecklistItem {
+  id: number | null;
+  document_type: DocumentType;
+  title: string;
+  is_mandatory: boolean;
+  number_required: boolean;
+  status: ItemStatus;
+  document_number: string | null;
+  expiry_date: string | null;
+  file_url: string | null;
+  file_is_pdf: boolean;
+  rejection_reason: string | null;
+  is_expired: boolean;
+  uploaded_at: string | null;
 }
 
+export interface VehicleInfo {
+  vehicle_type: VehicleType | null;
+  vehicle_plate: string | null;
+  vehicle_model: string | null;
+  status: Exclude<ItemStatus, 'expired'>;
+  rejection_reason: string | null;
+  is_submitted: boolean;
+}
+
+/** GET /rider/documents (also returned by POST /rider/documents). */
 export interface DocumentsResponse {
-  driver_profile: DriverProfileState;
-  documents: DriverDocumentItem[];
-  missing_types: string[];
-  all_approved: boolean;
+  approval_status: ApprovalStatus;
+  rejection_reason: string | null;
+  can_edit: boolean;
+  submit_blockers: string[];
+  vehicle_info: VehicleInfo;
+  checklist: ChecklistItem[];
+  can_go_online: boolean;
 }
 
 export interface DeliveryAddress {

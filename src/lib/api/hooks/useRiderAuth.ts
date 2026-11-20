@@ -1,10 +1,14 @@
+import { isAxiosError } from 'axios';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '../../auth/authStore';
 import { getAuthToken, removeAuthToken, storeAuthToken } from '../client';
 import { queryKeys } from '../queryKeys';
 import { riderAuthService } from '../services/riderAuthService';
 
-export function useRiderMe(enabled = true) {
+export function useRiderMe(
+  enabled = true,
+  options: { refetchInterval?: number | false } = {},
+) {
   const { setAuth, clearAuth } = useAuthStore();
 
   return useQuery({
@@ -12,14 +16,24 @@ export function useRiderMe(enabled = true) {
     queryFn: async () => {
       const token = await getAuthToken();
       if (!token) return null;
-      const res = await riderAuthService.me();
-      if (res?.user && res?.driver_profile) {
-        await setAuth(token, res.user, res.driver_profile);
+      try {
+        const res = await riderAuthService.me();
+        if (res?.user && res?.driver_profile) {
+          await setAuth(token, res.user, res.driver_profile);
+        }
+        return res;
+      } catch (err) {
+        // A revoked/expired token: drop it so the rider lands on sign-in.
+        if (isAxiosError(err) && err.response?.status === 401) {
+          await clearAuth();
+          return null;
+        }
+        throw err;
       }
-      return res;
     },
     enabled,
     staleTime: 1000 * 60, // 1 minute
+    refetchInterval: options.refetchInterval,
   });
 }
 

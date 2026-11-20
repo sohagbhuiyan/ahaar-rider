@@ -1,7 +1,7 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useRouter } from 'expo-router';
 import { useRef, useState } from 'react';
-import { Controller, useForm } from 'react-hook-form';
+import { Controller, useForm, useWatch } from 'react-hook-form';
 import { Pressable, Text, View, type TextInput } from 'react-native';
 import { toast } from 'sonner-native';
 import { z } from 'zod';
@@ -48,7 +48,7 @@ export function RegisterSheet({ open, onClose, onOpenLogin }: Props) {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const registerMutation = useRegister();
 
-  const { control, handleSubmit, reset, watch, setValue } = useForm<FormValues>({
+  const { control, handleSubmit, reset, setValue } = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues: {
       name: '',
@@ -60,7 +60,7 @@ export function RegisterSheet({ open, onClose, onOpenLogin }: Props) {
     },
   });
 
-  const selectedBranch = watch('branch_id');
+  const selectedBranch = useWatch({ control, name: 'branch_id' });
 
   const handleClose = () => {
     reset();
@@ -172,6 +172,7 @@ export function RegisterSheet({ open, onClose, onOpenLogin }: Props) {
               error={error?.message}
               keyboardType="phone-pad"
               returnKeyType="next"
+              onSubmitEditing={() => passwordRef.current?.focus()}
             />
           )}
         />
@@ -185,7 +186,7 @@ export function RegisterSheet({ open, onClose, onOpenLogin }: Props) {
               return (
                 <Pressable
                   key={b.id}
-                  onPress={() => setValue('branch_id', b.id)}
+                  onPress={() => setValue('branch_id', b.id, { shouldValidate: true })}
                   className={`flex-row items-center justify-between rounded-2xl border p-3.5 ${
                     isSelected
                       ? 'border-brand-500 bg-brand-50'

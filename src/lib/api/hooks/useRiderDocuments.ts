@@ -1,7 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+
+import { useAuthStore } from '../../auth/authStore';
 import { queryKeys } from '../queryKeys';
 import { riderDocumentService } from '../services/riderDocumentService';
-import { useAuthStore } from '../../auth/authStore';
+import type { DocumentsResponse } from '../types';
 
 export function useRiderDocuments(enabled = true) {
   return useQuery({
@@ -17,8 +19,8 @@ export function useUploadDocument() {
 
   return useMutation({
     mutationFn: riderDocumentService.uploadDocument,
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: queryKeys.rider.documents() });
+    onSuccess: (data) => {
+      qc.setQueryData<DocumentsResponse>(queryKeys.rider.documents(), data);
     },
   });
 }
@@ -30,10 +32,8 @@ export function useSaveVehicle() {
   return useMutation({
     mutationFn: riderDocumentService.saveVehicle,
     onSuccess: (data) => {
-      if (data?.driver_profile) {
-        updateProfile(data.driver_profile);
-      }
-      qc.invalidateQueries({ queryKey: queryKeys.rider.documents() });
+      if (data?.driver_profile) updateProfile(data.driver_profile);
+      if (data?.documents) qc.setQueryData(queryKeys.rider.documents(), data.documents);
       qc.invalidateQueries({ queryKey: queryKeys.rider.me() });
     },
   });
@@ -46,9 +46,7 @@ export function useSubmitForReview() {
   return useMutation({
     mutationFn: riderDocumentService.submitForReview,
     onSuccess: (data) => {
-      if (data?.driver_profile) {
-        updateProfile(data.driver_profile);
-      }
+      if (data?.driver_profile) updateProfile(data.driver_profile);
       qc.invalidateQueries({ queryKey: queryKeys.rider.documents() });
       qc.invalidateQueries({ queryKey: queryKeys.rider.me() });
     },

@@ -84,32 +84,47 @@ erDiagram
 * `is_active`: Boolean, Default: true
 * `timestamps`
 
-#### 2. `driver_profiles` (New Table)
+#### 2. `driver_profiles`
 * `id`: Bigint, Primary Key
 * `user_id`: ForeignId -> `users.id`, Unique, Cascade on Delete
-* `branch_id`: ForeignId -> `branches.id`, Restrict on Delete
-* `vehicle_type`: Enum('car', 'bike')
-* `vehicle_plate`: Varchar(30)
-* `license_number`: Varchar(50)
-* `approval_status`: Enum('pending', 'approved', 'rejected', 'expired_documents', 'suspended')
+* `branch_id`: ForeignId -> `branches.id`, Nullable, Null on Delete
+* `vehicle_type`: Enum('car', 'bike'), Nullable
+* `vehicle_plate`: Varchar(30), Nullable
+* `vehicle_model`: Varchar(100), Nullable
+* `license_number`: Varchar(50), Nullable
+* `vehicle_status`: Varchar(20), Default 'not_submitted' — 'not_submitted' | 'submitted' | 'approved' | 'rejected'
+* `vehicle_rejection_reason`: Text, Nullable
+* `vehicle_verified_by`: ForeignId -> `users.id`, Nullable
+* `vehicle_verified_at`: Timestamp, Nullable
+* `approval_status`: Enum('pending_initial_approval', 'approved_for_documents', 'under_review', 'approved', 'rejected', 'suspended', 'expired_documents')
+* `initial_approved_at`: Timestamp, Nullable — Stage 2 passed (`registration_approved`)
+* `initial_approved_by`: ForeignId -> `users.id`, Nullable
+* `submitted_for_review_at`: Timestamp, Nullable
+* `rejection_reason`: Text, Nullable — reason for a rejected or suspended application
 * `is_active`: Boolean, Default: false (Online/Offline shift toggle)
 * `is_busy`: Boolean, Default: false
-* `current_lat`: Decimal(10, 7), Nullable
-* `current_lng`: Decimal(10, 7), Nullable
+* `current_lat` / `current_lng`: Decimal(10, 7), Nullable
 * `last_location_at`: Timestamp, Nullable
 * `timestamps`
 
-#### 3. `driver_documents` (New Table)
+#### 3. `driver_documents`
 * `id`: Bigint, Primary Key
 * `driver_profile_id`: ForeignId -> `driver_profiles.id`, Cascade on Delete
-* `document_type`: Enum('national_id', 'driving_license', 'vehicle_registration', 'health_certificate')
-* `file_path`: Varchar(2048)
+* `document_type`: Enum('iqama', 'driving_license', 'vehicle_registration') — unique per profile
+* `document_number`: Varchar(50), Nullable (required on upload for iqama & driving_license)
+* `file_path`: Varchar(2048) on the `public` disk under `rider-documents/{profile_id}/`
 * `expiry_date`: Date
-* `status`: Enum('pending', 'verified', 'rejected')
-* `rejection_reason`: Varchar(500), Nullable
+* `status`: Enum('submitted', 'approved', 'rejected', 'expired'). The API also reports two derived statuses: `not_submitted` (no row) and `under_review` (submitted while the profile is `under_review`); `expired` is also derived from `expiry_date`.
+* `rejection_reason`: Text, Nullable
 * `verified_by`: ForeignId -> `users.id`, Nullable
 * `verified_at`: Timestamp, Nullable
 * `timestamps`
+
+#### 3a. Onboarding audit trail (existing `activity_log`)
+No new table: each onboarding step is logged with Spatie Activitylog, `log_name = 'rider_onboarding'`, subject = `DriverProfile`, causer = acting admin or rider, `properties` = `{from, to, reason, document_type}`.
+
+#### 3b. Onboarding service
+`App\Services\Rider\RiderOnboarding` owns every status transition, the activity log entries, and the JSON views (`riderProfile`, `riderDocuments`, `adminSummary`, `adminDetail`). `AdminRiderController`, `RiderAuthController` and `RiderDocumentController` are thin wrappers around it. Eligibility lives on the model: `DriverProfile::activationChecks()`, `meetsActivationRequirements()`, `canGoOnline()`.
 
 #### 4. `delivery_runs` (New Table - Car Routes)
 * `id`: Bigint, Primary Key

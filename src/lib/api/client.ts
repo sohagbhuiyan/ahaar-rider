@@ -1,16 +1,17 @@
 import axios, { type AxiosError } from 'axios';
 import * as SecureStore from 'expo-secure-store';
-import { Platform } from 'react-native';
 
 const TOKEN_KEY = 'ahaar_rider_jwt_token';
 
-// In development, Android emulator uses 10.0.2.2, iOS simulator uses localhost
-const DEFAULT_API_URL = __DEV__
-  ? (Platform.OS === 'android' ? 'http://10.0.2.2:8000/api/v1' : 'http://localhost:8000/api/v1')
-  : 'https://api.ahaar.store/api/v1';
+// Point at the hosted API by default so the app works on a real phone in
+// Expo Go. `localhost` / `10.0.2.2` only resolve on a simulator/emulator, so a
+// physical device got "Network Error" before the request ever left the phone.
+// Override with EXPO_PUBLIC_API_URL in .env.local (restart Metro after).
+const HOSTED_API_URL = 'https://api.ahaar.store/api/v1';
+export const API_BASE_URL = (process.env.EXPO_PUBLIC_API_URL || HOSTED_API_URL).replace(/\/+$/, '');
 
 export const apiClient = axios.create({
-  baseURL: DEFAULT_API_URL,
+  baseURL: API_BASE_URL,
   timeout: 15000,
   headers: {
     'Content-Type': 'application/json',
@@ -55,6 +56,11 @@ export function extractErrorMessage(error: unknown): string {
     }
     if (err.response?.data?.message) {
       return err.response.data.message;
+    }
+    if (!err.response) {
+      return err.code === 'ECONNABORTED'
+        ? 'The server took too long to respond. Please try again.'
+        : `Can't reach the server (${API_BASE_URL}). Check your internet connection.`;
     }
     if (err.message) return err.message;
   }
