@@ -21,6 +21,11 @@ export const queryKeys = {
     /** GET /rider/orders/{id}: an Offer or a Job. */
     detail: (id: number | string) => [...queryKeys.orders.all, 'detail', String(id)] as const,
   },
+  notifications: {
+    all: ['notifications'] as const,
+    list: () => [...queryKeys.notifications.all, 'list'] as const,
+    unreadCount: () => [...queryKeys.notifications.all, 'unread-count'] as const,
+  },
   branches: {
     all: ['branches'] as const,
     list: () => [...queryKeys.branches.all, 'list'] as const,

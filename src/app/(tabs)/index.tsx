@@ -1,4 +1,4 @@
-import { useRouter } from 'expo-router';
+import { useIsFocused, useRouter } from 'expo-router';
 import { useEffect } from 'react';
 import {
   ActivityIndicator,
@@ -12,8 +12,10 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { toast } from 'sonner-native';
 
+import BellIcon from '@/components/icons/BellIcon';
 import { Badge, Button, Card } from '@/components/ui';
 import { extractErrorMessage } from '@/lib/api/client';
+import { useUnreadNotificationCount } from '@/lib/api/hooks/useNotifications';
 import { useActiveJob, useCarRunsToday, useOffers, useRiderStats } from '@/lib/api/hooks/useRiderDeliveries';
 import { useToggleShiftStatus } from '@/lib/api/hooks/useRiderShift';
 import { DELIVERY_STATUS_LABEL, DELIVERY_STATUS_VARIANT } from '@/lib/delivery';
@@ -54,6 +56,8 @@ export default function HomeScreen() {
   const bikeJob = activeJob?.kind === 'order' ? activeJob : null;
 
   const toggleShiftMutation = useToggleShiftStatus();
+  const isFocused = useIsFocused();
+  const { data: unread = 0, refetch: refetchUnread } = useUnreadNotificationCount({ poll: isFocused });
 
   const activeProfile = meData?.driver_profile || profile;
 
@@ -94,6 +98,7 @@ export default function HomeScreen() {
       refetchMe(),
       refetchStats(),
       refetchActiveJob(),
+      refetchUnread(),
       isCar ? refetchCarRun() : Promise.resolve(),
       isBike ? refetchOrders() : Promise.resolve(),
     ]);
@@ -137,6 +142,20 @@ export default function HomeScreen() {
                 {getGreeting()}, {user?.name?.split(' ')[0] || 'Rider'}
               </Text>
             </View>
+            <Pressable
+              onPress={() => router.push('/notifications')}
+              accessibilityRole="button"
+              accessibilityLabel={unread > 0 ? `Notifications, ${unread} unread` : 'Notifications'}
+              hitSlop={6}
+              className="mr-2 h-11 w-11 items-center justify-center rounded-full bg-surface-muted border border-border active:opacity-75"
+            >
+              <BellIcon color={colors.text.primary} size={22} filled={unread > 0} />
+              {unread > 0 ? (
+                <View className="absolute -right-1 -top-1 min-w-[20px] h-5 px-1 items-center justify-center rounded-full bg-danger border-2 border-surface">
+                  <Text className="text-[10px] font-black text-white">{unread > 99 ? '99+' : unread}</Text>
+                </View>
+              ) : null}
+            </Pressable>
             <Pressable
               onPress={() => router.push('/(tabs)/profile')}
               className="h-11 w-11 items-center justify-center rounded-full bg-brand-50 border border-brand-200"

@@ -8,6 +8,7 @@ import { toast } from 'sonner-native';
 import { IncomingOrderCard } from '@/components/delivery/IncomingOrderCard';
 import { removeOfferFromCache, useActiveJob } from '@/lib/api/hooks/useRiderDeliveries';
 import { queryKeys } from '@/lib/api/queryKeys';
+import { notificationService } from '@/lib/api/services/notificationService';
 import { riderShiftService } from '@/lib/api/services/riderShiftService';
 import type { ActiveJob } from '@/lib/api/types';
 import { useAuthStore } from '@/lib/auth/authStore';
@@ -19,31 +20,18 @@ import {
   stopBackgroundLocation,
   toPoint,
 } from '@/lib/location/backgroundLocation';
+import { useUnreadNotificationCount } from '@/lib/api/hooks/useNotifications';
 import {
+  ensureNotificationChannels,
   listenForPushTokenChanges,
   pushData,
   registerDevicePush,
-  type PushData,
+  routeForNotification,
+  setAppBadge,
 } from '@/lib/notifications';
 import { useDeliveryStore } from '@/lib/store';
 
 const IDLE_PING_MS = 30_000;
-
-/** Where a notification tap should land. */
-function routeForPush(data: PushData): string | null {
-  const orderId = Number(data.order_id);
-  switch (data.type) {
-    case 'offer.new':
-    case 'offer.assigned':
-    case 'offer.taken':
-    case 'job.cancelled':
-      return orderId ? `/order/${orderId}` : '/(tabs)/orders';
-    case 'run.assigned':
-      return '/(tabs)/orders';
-    default:
-      return null;
-  }
-}
 
 /**
  * Everything that lives as long as a signed-in session, independent of the
@@ -55,11 +43,29 @@ export function SessionEffects() {
   const approved = useAuthStore((s) => s.profile?.approval_status === 'approved');
   const signedIn = Boolean(token);
 
+  useNotificationChannels();
   usePushRegistration(signedIn);
   usePushHandling(signedIn && approved);
+  useAppBadge(signedIn && approved);
   useDeliveryTracking(signedIn && approved);
 
   return signedIn && approved ? <IncomingOrderCard /> : null;
+}
+
+/** Both Android channels exist from the first launch, signed in or not. */
+function useNotificationChannels() {
+  useEffect(() => {
+    ensureNotificationChannels();
+  }, []);
+}
+
+/** App icon badge follows the unread inbox count; cleared when signed out. */
+function useAppBadge(enabled: boolean) {
+  const { data: unread } = useUnreadNotificationCount();
+  const count = enabled ? (unread ?? 0) : 0;
+  useEffect(() => {
+    setAppBadge(count);
+  }, [count]);
 }
 
 function usePushRegistration(signedIn: boolean) {
@@ -81,6 +87,8 @@ function usePushHandling(enabled: boolean) {
     const sub = Notifications.addNotificationReceivedListener((notification) => {
       const data = pushData(notification);
       const orderId = Number(data.order_id) || null;
+      // Anything that reaches the inbox moves the bell.
+      qc.invalidateQueries({ queryKey: queryKeys.notifications.all });
 
       switch (data.type) {
         case 'offer.new':
@@ -110,6 +118,12 @@ function usePushHandling(enabled: boolean) {
               : `Order #${orderId ?? ''} was cancelled.`,
           );
           break;
+        case 'job.updated':
+          // The kitchen confirmed the bag handover: the job is now picked_up.
+          qc.invalidateQueries({ queryKey: queryKeys.activeJob });
+          if (orderId) qc.invalidateQueries({ queryKey: queryKeys.orders.detail(orderId) });
+          toast.success('Kitchen confirmed handover');
+          break;
         case 'run.assigned':
           qc.invalidateQueries({ queryKey: queryKeys.deliveries.runsToday() });
           qc.invalidateQueries({ queryKey: queryKeys.activeJob });
@@ -123,7 +137,11 @@ function usePushHandling(enabled: boolean) {
   useEffect(() => {
     if (!enabled) return;
     const open = (response: Notifications.NotificationResponse) => {
-      const href = routeForPush(pushData(response.notification));
+      // The push carries its inbox row id: opening it counts as reading it.
+      const inboxId = (response.notification.request.content.data as { notification_id?: unknown } | undefined)?.notification_id;
+      if (typeof inboxId === 'string' && inboxId) notificationService.markRead(inboxId).catch(() => {});
+      const href = routeForNotification(pushData(response.notification));
+      qc.invalidateQueries({ queryKey: queryKeys.notifications.all });
       if (href) router.push(href as never);
     };
 
@@ -145,7 +163,7 @@ function usePushHandling(enabled: boolean) {
       cancelled = true;
       sub.remove();
     };
-  }, [enabled, router]);
+  }, [enabled, router, qc]);
 }
 
 type TrackingMode = 'off' | 'background' | 'foreground';

@@ -15,6 +15,7 @@ import {
 } from '@/lib/api/hooks/useRiderDeliveries';
 import { isJob } from '@/lib/api/services/riderDeliveryService';
 import { actionErrorMessage } from '@/lib/delivery';
+import { useIncomingOrderAlert } from '@/lib/incomingAlert';
 import { useDeliveryStore } from '@/lib/store';
 import { colors } from '@/lib/theme';
 
@@ -42,6 +43,11 @@ export function IncomingOrderCard() {
   const reason = errorReason(error);
   const isGone = taken || reason === 'already_taken' || reason === 'not_yours';
 
+  // Ring until the rider answers (accept / decline), the card goes away, or 30 s.
+  const [answeredId, setAnsweredId] = useState<number | null>(null);
+  const answered = answeredId !== null && answeredId === orderId;
+  useIncomingOrderAlert(Boolean(orderId) && !isGone && !answered && !isJob(data), orderId);
+
   // Already ours (accepted on another screen): nothing to decide.
   useEffect(() => {
     if (orderId && isJob(data)) dismiss();
@@ -56,6 +62,7 @@ export function IncomingOrderCard() {
   const offer = data && !isJob(data) ? data : null;
 
   const onAccept = () => {
+    setAnsweredId(orderId);
     accept.mutate(orderId, {
       onSuccess: () => {
         dismiss();
@@ -73,6 +80,7 @@ export function IncomingOrderCard() {
   };
 
   const onDecline = () => {
+    setAnsweredId(orderId);
     decline.mutate({ orderId }, { onSettled: dismiss });
   };
 

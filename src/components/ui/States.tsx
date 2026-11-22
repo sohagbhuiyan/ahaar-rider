@@ -6,17 +6,18 @@ import { Button } from './Button';
 
 interface EmptyProps {
   title: string;
+  icon?: string;
   description?: string;
   actionLabel?: string;
   onAction?: () => void;
   className?: string;
 }
 
-export function EmptyState({ title, description, actionLabel, onAction, className }: EmptyProps) {
+export function EmptyState({ title, icon = '📦', description, actionLabel, onAction, className }: EmptyProps) {
   return (
     <View className={cn('items-center justify-center p-8', className)}>
       <View className="mb-4 h-16 w-16 items-center justify-center rounded-full bg-surface-muted border border-border">
-        <Text className="text-2xl">📦</Text>
+        <Text className="text-2xl">{icon}</Text>
       </View>
       <Text className="text-center text-lg font-bold text-text-primary">{title}</Text>
       {description ? (

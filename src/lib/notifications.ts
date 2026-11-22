@@ -4,14 +4,27 @@ import { Platform } from 'react-native';
 
 import { apiClient } from '@/lib/api/client';
 
-/** Must match the backend's FCM channel (docs/delivery-api.md) and the plugin's `defaultChannel`. */
-export const DELIVERY_CHANNEL_ID = 'ahaar-deliveries';
+/**
+ * Android channels (docs/delivery-api.md, "Push sound and channels (v2)").
+ * Android fixes a channel's sound, importance and vibration when it is first
+ * created, so changing any of them means a new channel id.
+ */
+export const NEW_ORDERS_CHANNEL_ID = 'ahaar-new-orders';
+/** Also the plugin's `defaultChannel` in app.json. */
+export const UPDATES_CHANNEL_ID = 'ahaar-updates';
+/** v1 channel (system default sound). Removed so riders don't see two entries in settings. */
+const LEGACY_CHANNEL_ID = 'ahaar-deliveries';
+
+/** Bundled by the expo-notifications plugin `sounds` option; the FCM `sound` is the same name. */
+const NEW_ORDER_SOUND = 'new_order.wav';
+const ORDER_UPDATE_SOUND = 'order_update.wav';
 
 export type PushType =
   | 'offer.new'
   | 'offer.assigned'
   | 'offer.taken'
   | 'job.cancelled'
+  | 'job.updated'
   | 'run.assigned';
 
 /** The push `data` block: strings only. */
@@ -19,23 +32,28 @@ export interface PushData {
   type?: PushType | string;
   order_id?: string;
   run_id?: string;
+  delivery_id?: string;
   reason?: string;
 }
 
-/** Incoming orders get the in-app card instead of a system banner; `offer.taken` is silent. */
-const IN_APP_TYPES = new Set(['offer.new', 'offer.assigned']);
+/** Pushes that only sync state: never shown, never in the inbox. */
+const SILENT_TYPES = new Set(['offer.taken']);
 
+export function isSilentPush(type: string | undefined | null): boolean {
+  return SILENT_TYPES.has(String(type));
+}
+
+// Every non-silent push shows the heads-up banner, plays the channel sound and
+// sets the badge, including while the app is open. For `offer.*` the
+// incoming-order card is raised on top by SessionEffects.
 Notifications.setNotificationHandler({
   handleNotification: async (notification) => {
-    const type = pushData(notification).type;
-    if (type === 'offer.taken') {
-      return { shouldShowBanner: false, shouldShowList: false, shouldPlaySound: false, shouldSetBadge: false };
-    }
+    const show = !isSilentPush(pushData(notification).type);
     return {
-      shouldShowBanner: !IN_APP_TYPES.has(String(type)),
-      shouldShowList: true,
-      shouldPlaySound: true,
-      shouldSetBadge: false,
+      shouldShowBanner: show,
+      shouldShowList: show,
+      shouldPlaySound: show,
+      shouldSetBadge: show,
     };
   },
 });
@@ -48,17 +66,82 @@ export function pushData(notification: Notifications.Notification): PushData {
   return (trigger?.remoteMessage?.data ?? {}) as PushData;
 }
 
-export async function ensureDeliveryChannel(): Promise<void> {
-  if (Platform.OS !== 'android') return;
-  await Notifications.setNotificationChannelAsync(DELIVERY_CHANNEL_ID, {
-    name: 'Delivery alerts',
-    description: 'New orders, assignments and cancellations',
-    importance: Notifications.AndroidImportance.HIGH,
-    vibrationPattern: [0, 250, 250, 250],
-    lightColor: '#FF7A00',
-    // No `sound`: Android uses the system default. 'default' is treated as a
-    // bundled custom sound file name and fails.
-  });
+/** What a push or an inbox row points at. Ids are strings in a push, numbers in the inbox. */
+export interface NotificationTarget {
+  type?: string | null;
+  order_id?: string | number | null;
+  run_id?: string | number | null;
+  delivery_id?: string | number | null;
+}
+
+/** Where tapping a push, or the same message in the inbox, should land. */
+export function routeForNotification(target: NotificationTarget): string | null {
+  const orderId = Number(target.order_id) || null;
+  const deliveryId = Number(target.delivery_id) || null;
+  switch (target.type) {
+    case 'offer.new':
+    case 'offer.assigned':
+    case 'offer.taken':
+    case 'job.cancelled':
+    case 'job.updated':
+      return orderId ? `/order/${orderId}` : '/(tabs)/orders';
+    case 'run.assigned':
+      return '/(tabs)/orders';
+    default:
+      if (orderId) return `/order/${orderId}`;
+      if (deliveryId) return `/delivery/${deliveryId}`;
+      if (target.run_id) return '/(tabs)/orders';
+      return null;
+  }
+}
+
+let channelsReady: Promise<void> | null = null;
+
+/**
+ * Create both channels and drop the v1 one. Runs on app start, before the
+ * Android 13+ permission prompt, and must have run before the first push
+ * arrives (a killed app's push is drawn by the system from the channel).
+ * Safe to call often.
+ */
+export function ensureNotificationChannels(): Promise<void> {
+  if (Platform.OS !== 'android') return Promise.resolve();
+  if (!channelsReady) {
+    channelsReady = (async () => {
+      await Notifications.setNotificationChannelAsync(NEW_ORDERS_CHANNEL_ID, {
+        name: 'New orders',
+        description: 'New and assigned orders. Rings so you never miss one.',
+        importance: Notifications.AndroidImportance.MAX,
+        sound: NEW_ORDER_SOUND,
+        enableVibrate: true,
+        vibrationPattern: [0, 400, 250, 400, 250, 600],
+        lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+        bypassDnd: false,
+        enableLights: true,
+        lightColor: '#FF7A00',
+        showBadge: true,
+      });
+      await Notifications.setNotificationChannelAsync(UPDATES_CHANNEL_ID, {
+        name: 'Order updates',
+        description: 'Kitchen handover, cancellations and other changes to your deliveries',
+        importance: Notifications.AndroidImportance.HIGH,
+        sound: ORDER_UPDATE_SOUND,
+        enableVibrate: true,
+        lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+        showBadge: true,
+      });
+      const legacy = await Notifications.getNotificationChannelAsync(LEGACY_CHANNEL_ID).catch(() => null);
+      if (legacy) await Notifications.deleteNotificationChannelAsync(LEGACY_CHANNEL_ID);
+    })().catch(() => {
+      // Try again next time (e.g. a build without the native module).
+      channelsReady = null;
+    });
+  }
+  return channelsReady;
+}
+
+/** App icon badge = unread inbox count. Best effort (iOS needs `allowBadge`). */
+export function setAppBadge(count: number): void {
+  Notifications.setBadgeCountAsync(Math.max(0, count)).catch(() => {});
 }
 
 let registeredToken: string | null = null;
@@ -79,7 +162,7 @@ export async function registerDevicePush(): Promise<string | null> {
   if (Platform.OS !== 'android' || !Device.isDevice) return null;
   try {
     // Android 13+ only shows the permission prompt once a channel exists.
-    await ensureDeliveryChannel();
+    await ensureNotificationChannels();
     const current = await Notifications.getPermissionsAsync();
     const granted = current.granted || (await Notifications.requestPermissionsAsync()).granted;
     if (!granted) return null;

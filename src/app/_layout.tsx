@@ -58,6 +58,7 @@ export default function RootLayout() {
               <Stack.Screen name="(tabs)" />
               <Stack.Screen name="order/[id]" />
               <Stack.Screen name="delivery/[id]" />
+              <Stack.Screen name="notifications" />
               <Stack.Screen
                 name="location-permission"
                 options={{ presentation: 'modal', animation: 'slide_from_bottom' }}

@@ -53,8 +53,13 @@
       [
         "expo-notifications",
         {
+          "icon": "./assets/images/notification-icon.png",
           "color": "#FF7A00",
-          "defaultChannel": "ahaar-deliveries"
+          "defaultChannel": "ahaar-updates",
+          "sounds": [
+            "./assets/sounds/new_order.wav",
+            "./assets/sounds/order_update.wav"
+          ]
         }
       ],
       [
@@ -71,7 +76,26 @@
       [
         "expo-image-picker",
         {
-          "cameraPermission": "AHAAR Rider uses the camera to take proof-of-delivery photos."
+          "cameraPermission": "AHAAR Rider uses the camera to scan the bag QR code at the kitchen and to take proof-of-delivery photos.",
+          "microphonePermission": false
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "AHAAR Rider uses the camera to scan the bag QR code at the kitchen and to take proof-of-delivery photos.",
+          "microphonePermission": false,
+          "recordAudioAndroid": false,
+          "barcodeScannerEnabled": true
+        }
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": false,
+          "recordAudioAndroid": false,
+          "enableBackgroundPlayback": false,
+          "enableBackgroundRecording": false
         }
       ]
     ],

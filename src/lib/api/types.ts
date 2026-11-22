@@ -293,3 +293,31 @@ export interface LocationPoint {
   accuracy?: number | null;
   recorded_at?: string;
 }
+
+// ---------------------------------------------------------------------------
+// Inbox (GET /notifications): the same messages that went out as pushes.
+// ---------------------------------------------------------------------------
+
+export interface AppNotification {
+  id: string;
+  type: string | null;
+  title: string | null;
+  body: string | null;
+  order_id: number | null;
+  delivery_id: number | null;
+  run_id: number | null;
+  status: string | null;
+  read_at: string | null;
+  created_at: string | null;
+}
+
+export interface NotificationsPage {
+  data: AppNotification[];
+  meta: {
+    current_page: number;
+    per_page: number;
+    total: number;
+    last_page: number;
+    unread_count: number;
+  };
+}
