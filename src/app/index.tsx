@@ -5,28 +5,29 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { LoginSheet } from '@/components/auth/LoginSheet';
 import { RegisterSheet } from '@/components/auth/RegisterSheet';
-import { Button } from '@/components/ui';
+import { Button, ErrorState } from '@/components/ui';
+import { extractErrorMessage } from '@/lib/api/client';
 import { useRiderMe } from '@/lib/api/hooks/useRiderAuth';
 import { useAuthStore } from '@/lib/auth/authStore';
 import { routeForStatus } from '@/lib/onboarding';
+import { signOutLocally } from '@/lib/session';
 import { colors } from '@/lib/theme';
 
 export default function WelcomeGatewayScreen() {
   const router = useRouter();
-  const { token, profile, isInitializing, restoreToken } = useAuthStore();
+  const token = useAuthStore((s) => s.token);
+  const profile = useAuthStore((s) => s.profile);
+  const isInitializing = useAuthStore((s) => s.isInitializing);
 
   const [loginOpen, setLoginOpen] = useState(false);
   const [registerOpen, setRegisterOpen] = useState(false);
 
-  useEffect(() => {
-    restoreToken();
-  }, [restoreToken]);
-
-  // Query server state with TanStack Query when token is present
-  const { data: meData, isLoading: isQueryLoading } = useRiderMe(Boolean(token));
+  // The token is restored by the root layout. With a token, the profile comes
+  // from GET /rider/me; a 401 there signs out via the client interceptor.
+  const { data: meData, isLoading: isQueryLoading, isError, error, refetch, isRefetching } = useRiderMe(Boolean(token));
 
   const activeProfile = meData?.driver_profile || profile;
-  const isLoading = isInitializing || (Boolean(token) && isQueryLoading);
+  const isLoading = isInitializing || (Boolean(token) && isQueryLoading && !activeProfile);
 
   useEffect(() => {
     if (!isLoading && token && activeProfile) {
@@ -34,7 +35,30 @@ export default function WelcomeGatewayScreen() {
     }
   }, [isLoading, token, activeProfile, router]);
 
-  if (isLoading) {
+  // Signed in but the server could not be reached: never fall back to the
+  // sign-in buttons (that would look like being logged out).
+  if (!isLoading && token && !activeProfile && isError) {
+    return (
+      <SafeAreaView className="flex-1 items-center justify-center bg-surface px-6">
+        <ErrorState
+          title="Can't reach AHAAR"
+          message={extractErrorMessage(error)}
+          onRetry={() => refetch()}
+        />
+        {isRefetching ? <ActivityIndicator color={colors.brand[500]} /> : null}
+        <Button
+          label="Sign out"
+          variant="ghost"
+          size="sm"
+          fullWidth={false}
+          className="mt-2"
+          onPress={() => signOutLocally()}
+        />
+      </SafeAreaView>
+    );
+  }
+
+  if (isLoading || (token && activeProfile)) {
     return (
       <SafeAreaView className="flex-1 items-center justify-center bg-surface">
         <ActivityIndicator size="large" color={colors.brand[500]} />

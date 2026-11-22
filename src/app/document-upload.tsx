@@ -15,7 +15,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { toast } from 'sonner-native';
 
-import { Badge, Button, Card, ErrorState, Input } from '@/components/ui';
+import { Badge, Button, Card, DateField, ErrorState, Input } from '@/components/ui';
 import { extractErrorMessage } from '@/lib/api/client';
 import {
   useRiderDocuments,
@@ -102,6 +102,13 @@ function firstOpenStep(data: DocumentsResponse): number {
     return !item || needsAction(item.status);
   });
   return Math.max(0, index);
+}
+
+function tomorrow(): Date {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() + 1);
+  return d;
 }
 
 function draftFrom(item: ChecklistItem | undefined): DocDraft {
@@ -537,14 +544,13 @@ function DocumentStep({
           error={errors.number}
         />
 
-      <Input
+      <DateField
         label="Expiry date"
-        placeholder="YYYY-MM-DD"
+        placeholder="Select expiry date"
         value={draft.expiry}
-        onChangeText={(expiry) => onChange({ expiry })}
+        onChange={(expiry) => onChange({ expiry })}
         editable={!readOnly}
-        keyboardType="numbers-and-punctuation"
-        maxLength={10}
+        minimumDate={tomorrow()}
         hint="Must be valid after today"
         error={errors.expiry}
       />

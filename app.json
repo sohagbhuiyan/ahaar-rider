@@ -8,7 +8,13 @@
     "scheme": "ahaarrider",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "icon": "./assets/expo.icon"
+      "icon": "./assets/expo.icon",
+      "infoPlist": {
+        "UIBackgroundModes": [
+          "location",
+          "remote-notification"
+        ]
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -18,7 +24,17 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "store.ahaarrider"
+      "package": "store.ahaarrider",
+      "googleServicesFile": "./google-services.json",
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION",
+        "POST_NOTIFICATIONS",
+        "CAMERA"
+      ]
     },
     "web": {
       "output": "static",
@@ -32,6 +48,30 @@
           "backgroundColor": "#208AEF",
           "image": "./assets/images/logo.png",
           "imageWidth": 76
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#FF7A00",
+          "defaultChannel": "ahaar-deliveries"
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "AHAAR Rider uses your location to offer nearby orders and guide you to the kitchen and the customer.",
+          "locationAlwaysAndWhenInUsePermission": "AHAAR Rider shares your location with the kitchen and the customer while you are delivering an order, even when the app is in the background.",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true,
+          "isIosBackgroundLocationEnabled": true
+        }
+      ],
+      "expo-task-manager",
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "AHAAR Rider uses the camera to take proof-of-delivery photos."
         }
       ]
     ],

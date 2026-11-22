@@ -26,7 +26,10 @@ export const riderAuthService = {
   },
 
   login: async (payload: { login: string; password: string }): Promise<AuthResponse> => {
-    const { data } = await apiClient.post<{ data: AuthResponse }>('/rider/auth/login', payload);
+    const { data } = await apiClient.post<{ data: AuthResponse }>('/rider/auth/login', {
+      ...payload,
+      device_name: 'rider-app',
+    });
     return data.data;
   },
 
@@ -36,6 +39,7 @@ export const riderAuthService = {
   },
 
   logout: async (): Promise<void> => {
-    await apiClient.post('/rider/auth/logout');
+    // A 401 here just means the session was already gone.
+    await apiClient.post('/rider/auth/logout', undefined, { skipAuthRedirect: true, timeout: 8000 });
   },
 };

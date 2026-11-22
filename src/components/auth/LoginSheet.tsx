@@ -1,5 +1,4 @@
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useRouter } from 'expo-router';
 import { useRef, useState } from 'react';
 import { Controller, useForm } from 'react-hook-form';
 import { Pressable, Text, View, type TextInput } from 'react-native';
@@ -8,7 +7,6 @@ import { z } from 'zod';
 
 import { Button, Input, PasswordInput, Sheet } from '@/components/ui';
 import { extractErrorMessage } from '@/lib/api/client';
-import { routeForStatus } from '@/lib/onboarding';
 import { useLogin } from '@/lib/api/hooks/useRiderAuth';
 
 const schema = z.object({
@@ -25,7 +23,6 @@ interface Props {
 }
 
 export function LoginSheet({ open, onClose, onOpenRegister }: Props) {
-  const router = useRouter();
   const passwordRef = useRef<TextInput>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -48,9 +45,7 @@ export function LoginSheet({ open, onClose, onOpenRegister }: Props) {
       onSuccess: (data) => {
         toast.success(`Welcome back, ${data.user.name}`);
         handleClose();
-
-        // Route according to 5-stage approval status
-        router.replace(routeForStatus(data.driver_profile.approval_status));
+        // The gateway routes by approval status once the session is stored.
       },
       onError: (err) => {
         setErrorMsg(extractErrorMessage(err) || 'Invalid phone, email or password.');

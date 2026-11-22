@@ -86,8 +86,122 @@ export interface DocumentsResponse {
   can_go_online: boolean;
 }
 
+// ---------------------------------------------------------------------------
+// Delivery contract (ahaar-backend docs/delivery-api.md)
+// ---------------------------------------------------------------------------
+
+/** Stable error `reason`s from dispatch actions: `{ message, reason, errors }`. */
+export type DispatchReason =
+  | 'already_taken'
+  | 'busy'
+  | 'invalid_transition'
+  | 'not_dispatchable'
+  | 'not_yours'
+  | 'not_eligible'
+  | 'wrong_vehicle'
+  | 'offline'
+  | 'wrong_code'
+  | 'rider_unavailable'
+  | 'already_dispatched';
+
+/** GET /rider/branches (public, registration form). */
+export interface PublicBranch {
+  id: number;
+  name: string;
+  code: string | null;
+  address: string | null;
+}
+
+export interface JobBranch {
+  id: number;
+  name: string;
+  address: string | null;
+  phone: string | null;
+  lat: number | null;
+  lng: number | null;
+}
+
+export interface Slot {
+  id: number;
+  name: string;
+  start_time: string;
+  end_time: string;
+}
+
+export type DeliveryStatus =
+  | 'searching_rider'
+  | 'assigned'
+  | 'accepted'
+  | 'heading_to_pickup'
+  | 'picked_up'
+  | 'on_the_way'
+  | 'delivered'
+  | 'failed'
+  | 'cancelled';
+
+export type JobAction =
+  | 'accept'
+  | 'decline'
+  | 'heading_to_pickup'
+  | 'pickup'
+  | 'on_the_way'
+  | 'complete'
+  | 'report_issue';
+
+export type PodType = 'handed_to_customer' | 'doorstep' | 'reception' | 'security_gate';
+
+/** An instant order open to this rider (no customer identity). */
+export interface Offer {
+  order_id: number;
+  delivery_status: DeliveryStatus;
+  assigned_to_you: boolean;
+  branch: JobBranch | null;
+  /** lat/lng rounded to ~1 km. */
+  drop: { area: string | null; city: string | null; lat: number | null; lng: number | null };
+  distance_km: number | null;
+  items_count: number;
+  total_amount: number;
+  currency: string;
+  /** COD amount to collect at the door. */
+  cash_to_collect: number | null;
+  slot: Slot | null;
+  delivery_date: string | null;
+  offered_at: string | null;
+}
+
+/** An instant order this rider holds. */
+export interface Job extends Offer {
+  kind: 'order';
+  /** orders.status: the money/lifecycle field, not the delivery step. */
+  status: string;
+  customer: { name: string | null; phone: string | null };
+  address: {
+    line1: string | null;
+    line2: string | null;
+    area: string | null;
+    city: string | null;
+    building_number: string | null;
+    short_address: string | null;
+    instructions: string | null;
+    lat: number | null;
+    lng: number | null;
+  };
+  items: { name: string; quantity: number; unit_price: number }[];
+  next_actions: JobAction[];
+  pod: {
+    pod_type: PodType | null;
+    pod_photo_url: string | null;
+    cash_collected: number | null;
+    delivered_at: string | null;
+  };
+  timeline: { status: string; at: string | null }[];
+  accepted_at: string | null;
+  picked_up_at: string | null;
+  failed_reason: string | null;
+}
+
 export interface DeliveryAddress {
-  line1: string;
+  line1: string | null;
   line2?: string | null;
   area?: string | null;
   city?: string | null;
@@ -104,46 +218,78 @@ export interface MealItem {
   swapped_from?: string | null;
 }
 
+export type StopStatus =
+  | 'scheduled'
+  | 'locked'
+  | 'packed'
+  | 'out_for_delivery'
+  | 'delivered'
+  | 'failed_attempt'
+  | 'paused'
+  | 'skipped'
+  | 'returned';
+
 export interface CarRunStop {
   delivery_id: number;
   stop_sequence: number;
   verification_code: string;
-  status: 'scheduled' | 'locked' | 'packed' | 'out_for_delivery' | 'delivered' | 'failed_attempt';
-  customer_name: string;
-  customer_phone?: string;
+  status: StopStatus;
+  customer_name: string | null;
+  customer_phone?: string | null;
   address: DeliveryAddress;
   items: MealItem[];
   pod?: {
-    pod_type?: string;
-    pod_photo_url?: string;
-    delivered_at?: string;
+    pod_type?: string | null;
+    pod_photo_url?: string | null;
+    delivered_at?: string | null;
   };
-  failed_reason?: string;
+  failed_reason?: string | null;
+  run_code?: string | null;
+  slot_name?: string | null;
 }
 
 export interface CarRun {
+  kind: 'run';
   run_id: number;
   run_code: string;
-  slot_name: string;
-  slot_window: string;
-  status: 'draft' | 'ready' | 'dispatched' | 'completed' | 'cancelled';
+  slot_name: string | null;
+  slot_window: string | null;
+  delivery_date: string | null;
+  status: 'ready' | 'dispatched' | 'completed';
+  branch: JobBranch | null;
   total_stops: number;
   completed_stops: number;
+  started_at: string | null;
   stops: CarRunStop[];
 }
 
-export interface BikeOrder {
-  order_id: number;
-  total_amount: number;
+/** GET /rider/jobs/active: a bike Job, a car Run, or nothing. */
+export type ActiveJob = Job | CarRun | null;
+
+export interface RiderStats {
+  vehicle_type: VehicleType | null;
+  today: { completed: number; failed: number; cash_collected: number };
+  week: { completed: number; cash_collected: number };
+  total_completed: number;
+  runs_completed?: number;
   currency: string;
-  status?: string;
-  driver_id?: number | null;
-  customer_name?: string;
-  customer_phone?: string;
-  address?: Record<string, any>;
-  branch_name?: string;
-  items_count: number;
-  items?: Array<{ name: string; quantity: number; price: number }>;
-  confirmed_at?: string;
-  dispatched_at?: string;
+  recent: {
+    kind: 'order' | 'delivery';
+    id: number;
+    status: string;
+    area: string | null;
+    branch: string | null;
+    cash_collected: number | null;
+    currency: string | null;
+    at: string | null;
+  }[];
+}
+
+export interface LocationPoint {
+  lat: number;
+  lng: number;
+  heading?: number | null;
+  speed?: number | null;
+  accuracy?: number | null;
+  recorded_at?: string;
 }

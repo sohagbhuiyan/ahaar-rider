@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { getAuthToken, removeAuthToken, storeAuthToken } from '../api/client';
+import { getAuthToken, storeAuthToken } from '../api/client';
 import type { DriverProfileState, RiderUser } from '../api/types';
 
 interface AuthState {
@@ -7,10 +7,14 @@ interface AuthState {
   user: RiderUser | null;
   profile: DriverProfileState | null;
   isInitializing: boolean;
+  /** Sign-in / registration: persists the token. */
   setAuth: (token: string, user: RiderUser, profile: DriverProfileState) => Promise<void>;
+  /** A fresh GET /rider/me: the token is already stored. */
+  setSession: (user: RiderUser, profile: DriverProfileState) => void;
   updateProfile: (profileUpdates: Partial<DriverProfileState>) => void;
-  clearAuth: () => Promise<void>;
   restoreToken: () => Promise<string | null>;
+  /** In-memory only. The SecureStore token is removed by `signOutLocally`. */
+  reset: () => void;
 }
 
 export const useAuthStore = create<AuthState>((set, get) => ({
@@ -24,6 +28,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     set({ token, user, profile, isInitializing: false });
   },
 
+  setSession: (user, profile) => set({ user, profile }),
+
   updateProfile: (profileUpdates) => {
     const current = get().profile;
     if (current) {
@@ -31,19 +37,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   },
 
-  clearAuth: async () => {
-    await removeAuthToken();
-    set({ token: null, user: null, profile: null, isInitializing: false });
+  restoreToken: async () => {
+    const token = await getAuthToken();
+    set({ token, isInitializing: false });
+    return token;
   },
 
-  restoreToken: async () => {
-    try {
-      const token = await getAuthToken();
-      set({ token, isInitializing: false });
-      return token;
-    } catch {
-      set({ token: null, isInitializing: false });
-      return null;
-    }
-  },
+  reset: () => set({ token: null, user: null, profile: null, isInitializing: false }),
 }));

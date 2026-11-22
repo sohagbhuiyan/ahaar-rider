@@ -1,204 +1,131 @@
-import { useState } from 'react';
-import { Pressable, ScrollView, Text, View } from 'react-native';
+import { useRouter } from 'expo-router';
+import { RefreshControl, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { Badge, Card } from '@/components/ui';
-import { useAuthStore } from '@/lib/auth/authStore';
+import { Badge, Card, EmptyState, ErrorState, LoadingSpinner } from '@/components/ui';
+import { useRiderStats } from '@/lib/api/hooks/useRiderDeliveries';
+import { actionErrorMessage, DELIVERY_STATUS_LABEL } from '@/lib/delivery';
+import { colors } from '@/lib/theme';
+import { formatMoney } from '@/lib/utils';
+import type { DeliveryStatus } from '@/lib/api/types';
 
-const periodData = {
-  Today: {
-    total: '185.00',
-    deliveries: 10,
-    average: '18.50',
-    baseFee: '150.00',
-    bonus: '35.00',
-    bars: [30, 45, 60, 40, 80, 100, 65],
-  },
-  Week: {
-    total: '1,245.50',
-    deliveries: 68,
-    average: '18.32',
-    baseFee: '1,020.00',
-    bonus: '225.50',
-    bars: [60, 75, 90, 85, 95, 100, 70],
-  },
-  Month: {
-    total: '4,890.00',
-    deliveries: 264,
-    average: '18.52',
-    baseFee: '4,100.00',
-    bonus: '790.00',
-    bars: [70, 85, 80, 95, 90, 100, 85],
-  },
-} as const;
+function formatWhen(iso: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
 
-export default function EarningsScreen() {
-  const { profile } = useAuthStore();
-  const [period, setPeriod] = useState<keyof typeof periodData>('Week');
-  const summary = periodData[period];
+function Stat({ label, value, hint }: { label: string; value: string | number; hint?: string }) {
+  return (
+    <Card className="flex-1 p-4">
+      <Text className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">{label}</Text>
+      <Text className="mt-1.5 text-2xl font-black text-text-primary" numberOfLines={1} adjustsFontSizeToFit>
+        {value}
+      </Text>
+      {hint ? <Text className="mt-1 text-[11px] text-text-secondary">{hint}</Text> : null}
+    </Card>
+  );
+}
 
-  const isCar = profile?.vehicle_type === 'car';
-
-  const recentTransactions = [
-    {
-      id: 'TXN-9021',
-      title: isCar ? 'Central Hub · Lunch Catering Route' : 'Instant Order #ORD-84920',
-      time: 'Today · 01:45 PM',
-      amount: isCar ? '+SAR 144.00' : '+SAR 15.00',
-      stops: isCar ? '8 stops completed' : 'Delivered on-time',
-    },
-    {
-      id: 'TXN-9018',
-      title: isCar ? 'Central Hub · Breakfast Route' : 'Instant Order #ORD-84891',
-      time: 'Today · 08:30 AM',
-      amount: isCar ? '+SAR 72.00' : '+SAR 18.00',
-      stops: isCar ? '4 stops completed' : 'Delivered on-time',
-    },
-    {
-      id: 'TXN-8994',
-      title: isCar ? 'North Hub · Dinner Route' : 'Instant Order #ORD-84752',
-      time: 'Yesterday · 08:15 PM',
-      amount: isCar ? '+SAR 162.00' : '+SAR 16.50',
-      stops: isCar ? '9 stops completed' : 'Delivered on-time',
-    },
-    {
-      id: 'TXN-8940',
-      title: isCar ? 'Central Hub · Lunch Route' : 'Instant Order #ORD-84619',
-      time: '2 days ago · 01:10 PM',
-      amount: isCar ? '+SAR 180.00' : '+SAR 15.00',
-      stops: isCar ? '10 stops completed' : 'Delivered on-time',
-    },
-  ];
+/**
+ * Real numbers from GET /rider/stats: delivery counts and cash collected.
+ * The backend has no rider pay data, so nothing here is an "earning".
+ */
+export default function StatsScreen() {
+  const router = useRouter();
+  const { data, isLoading, isError, error, refetch, isRefetching } = useRiderStats();
+  const isCar = data?.vehicle_type === 'car';
 
   return (
     <SafeAreaView className="flex-1 bg-surface-muted" edges={['top']}>
-      {/* Top Header */}
       <View className="px-5 pt-3 pb-3 bg-surface border-b border-border">
-        <Text className="text-xs font-semibold uppercase tracking-wider text-text-muted">
-          Your Payouts
-        </Text>
-        <Text className="text-2xl font-black text-text-primary mt-0.5">Earnings</Text>
-
-        {/* Period Selector */}
-        <View className="flex-row mt-3 gap-2">
-          {(['Today', 'Week', 'Month'] as const).map((item) => (
-            <Pressable
-              key={item}
-              onPress={() => setPeriod(item)}
-              className={`flex-1 py-1.5 items-center rounded-lg border ${
-                period === item
-                  ? 'bg-brand-50 border-brand-500'
-                  : 'bg-surface-muted border-border'
-              }`}
-            >
-              <Text
-                className={`text-xs font-bold ${
-                  period === item ? 'text-brand-700' : 'text-text-secondary'
-                }`}
-              >
-                {item}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
+        <Text className="text-xs font-semibold uppercase tracking-wider text-text-muted">Performance</Text>
+        <Text className="text-2xl font-black text-text-primary mt-0.5">Your deliveries</Text>
       </View>
 
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 16, paddingBottom: 110 }}
-      >
-        <View className="gap-5">
-          {/* Main Total Card */}
-          <Card className="p-5 bg-surface">
-            <Text className="text-xs font-bold text-text-muted uppercase tracking-wider">
-              Total {period} Earnings
-            </Text>
-            <View className="flex-row items-baseline mt-1.5">
-              <Text className="text-sm font-black text-brand-700 mr-1">SAR</Text>
-              <Text className="text-4xl font-black text-text-primary">{summary.total}</Text>
-            </View>
-
-            <View className="mt-4 pt-3.5 border-t border-border flex-row justify-between">
-              <View>
-                <Text className="text-[10px] uppercase font-bold text-text-muted">Deliveries</Text>
-                <Text className="text-base font-bold text-text-primary mt-0.5">
-                  {summary.deliveries} {isCar ? 'stops' : 'orders'}
-                </Text>
-              </View>
-
-              <View>
-                <Text className="text-[10px] uppercase font-bold text-text-muted">Avg / Drop</Text>
-                <Text className="text-base font-bold text-text-primary mt-0.5">
-                  SAR {summary.average}
-                </Text>
-              </View>
-
-              <View>
-                <Text className="text-[10px] uppercase font-bold text-text-muted">Status</Text>
-                <Badge label="CLEARED" variant="success" className="mt-0.5" />
-              </View>
-            </View>
-          </Card>
-
-          {/* Breakdown Card */}
-          <Card className="p-4 bg-surface">
-            <Text className="text-xs font-bold text-text-muted uppercase tracking-wider mb-3">
-              Payment Breakdown
-            </Text>
-
-            <View className="gap-2.5">
-              <View className="flex-row justify-between items-center py-1">
-                <Text className="text-xs text-text-secondary">Base Delivery Pay</Text>
-                <Text className="text-xs font-bold text-text-primary">SAR {summary.baseFee}</Text>
-              </View>
-
-              <View className="flex-row justify-between items-center py-1">
-                <Text className="text-xs text-text-secondary">
-                  On-Time & Route Bonus
-                </Text>
-                <Text className="text-xs font-bold text-success">+SAR {summary.bonus}</Text>
-              </View>
-
-              <View className="flex-row justify-between items-center pt-2.5 border-t border-border">
-                <Text className="text-xs font-bold text-text-primary">Net Payable</Text>
-                <Text className="text-sm font-black text-brand-700">SAR {summary.total}</Text>
-              </View>
-            </View>
-          </Card>
-
-          {/* Bank Transfer Notice */}
-          <Card className="p-4 bg-brand-50 border-brand-200">
-            <View className="flex-row items-center gap-2 mb-1">
-              <Text className="text-lg">🏦</Text>
-              <Text className="text-xs font-bold text-brand-900">Direct Bank Deposit</Text>
-            </View>
-            <Text className="text-xs text-brand-800">
-              Payouts are transferred automatically every Tuesday to your registered Saudi IBAN. Next payout cycle starts in 2 days.
+      {isLoading ? (
+        <LoadingSpinner label="Loading stats…" className="flex-1" />
+      ) : isError || !data ? (
+        <ErrorState message={actionErrorMessage(error)} onRetry={() => refetch()} className="flex-1" />
+      ) : (
+        <ScrollView
+          contentContainerStyle={{ padding: 20, paddingBottom: 110, gap: 16 }}
+          refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={colors.brand[500]} />}
+        >
+          <Card className="bg-brand-700 border-transparent p-5">
+            <Text className="text-xs font-bold uppercase tracking-wider text-white/80">Today</Text>
+            <Text className="mt-1 text-4xl font-black text-white">{data.today.completed}</Text>
+            <Text className="text-xs text-white/80">
+              delivered{data.today.failed > 0 ? ` · ${data.today.failed} failed` : ''}
             </Text>
           </Card>
 
-          {/* Activity / Transaction History */}
-          <View>
-            <Text className="text-sm font-bold text-text-primary mb-3">
-              Recent Completed Dispatches
-            </Text>
-            <View className="gap-2.5">
-              {recentTransactions.map((tx) => (
-                <Card key={tx.id} className="p-3.5 bg-surface">
-                  <View className="flex-row justify-between items-start">
-                    <View className="flex-1 mr-2">
-                      <Text className="font-bold text-xs text-text-primary">{tx.title}</Text>
-                      <Text className="text-[11px] text-text-muted mt-0.5">{tx.stops}</Text>
-                      <Text className="text-[10px] text-text-muted mt-0.5">{tx.time}</Text>
-                    </View>
-                    <Text className="font-black text-sm text-success">{tx.amount}</Text>
-                  </View>
-                </Card>
-              ))}
-            </View>
+          <View className="flex-row gap-3">
+            <Stat label="This week" value={data.week.completed} hint="delivered" />
+            <Stat
+              label={isCar ? 'Routes done' : 'All time'}
+              value={isCar ? (data.runs_completed ?? 0) : data.total_completed}
+              hint={isCar ? `${data.total_completed} stops all time` : 'delivered'}
+            />
           </View>
-        </View>
-      </ScrollView>
+
+          {!isCar ? (
+            <View className="flex-row gap-3">
+              <Stat label="Cash today" value={formatMoney(data.today.cash_collected, data.currency)} hint="collected on delivery" />
+              <Stat label="Cash this week" value={formatMoney(data.week.cash_collected, data.currency)} hint="to hand in" />
+            </View>
+          ) : null}
+
+          <View>
+            <Text className="mb-3 text-sm font-bold text-text-primary">Recent</Text>
+            {data.recent.length === 0 ? (
+              <Card>
+                <EmptyState title="No deliveries yet" description="Finished deliveries show up here." />
+              </Card>
+            ) : (
+              <View className="gap-2.5">
+                {data.recent.map((r) => {
+                  const ok = r.status === 'delivered';
+                  const label =
+                    r.kind === 'order'
+                      ? (DELIVERY_STATUS_LABEL[r.status as DeliveryStatus] ?? r.status)
+                      : ok
+                        ? 'Delivered'
+                        : 'Failed';
+                  return (
+                    <Card
+                      key={`${r.kind}-${r.id}`}
+                      className="p-3.5"
+                      onPress={() => router.push(r.kind === 'order' ? `/order/${r.id}` : `/delivery/${r.id}`)}
+                    >
+                      <View className="flex-row items-start justify-between">
+                        <View className="mr-2 flex-1">
+                          <Text className="text-sm font-bold text-text-primary">
+                            {r.kind === 'order' ? `Order #${r.id}` : `Stop #${r.id}`}
+                            {r.area ? ` · ${r.area}` : ''}
+                          </Text>
+                          <Text className="mt-0.5 text-[11px] text-text-muted">
+                            {[r.branch, formatWhen(r.at)].filter(Boolean).join(' · ')}
+                          </Text>
+                        </View>
+                        <View className="items-end gap-1">
+                          <Badge label={label} variant={ok ? 'success' : 'danger'} />
+                          {r.cash_collected != null && r.cash_collected > 0 ? (
+                            <Text className="text-xs font-bold text-text-primary">
+                              {formatMoney(r.cash_collected, r.currency ?? data.currency)}
+                            </Text>
+                          ) : null}
+                        </View>
+                      </View>
+                    </Card>
+                  );
+                })}
+              </View>
+            )}
+          </View>
+        </ScrollView>
+      )}
     </SafeAreaView>
   );
 }

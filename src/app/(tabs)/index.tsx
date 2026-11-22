@@ -1,5 +1,4 @@
 import { useRouter } from 'expo-router';
-import * as Location from 'expo-location';
 import { useEffect } from 'react';
 import {
   ActivityIndicator,
@@ -15,8 +14,10 @@ import { toast } from 'sonner-native';
 
 import { Badge, Button, Card } from '@/components/ui';
 import { extractErrorMessage } from '@/lib/api/client';
-import { useAvailableBikeOrders, useCarRunsToday } from '@/lib/api/hooks/useRiderDeliveries';
-import { useSendLocationBeacon, useToggleShiftStatus } from '@/lib/api/hooks/useRiderShift';
+import { useActiveJob, useCarRunsToday, useOffers, useRiderStats } from '@/lib/api/hooks/useRiderDeliveries';
+import { useToggleShiftStatus } from '@/lib/api/hooks/useRiderShift';
+import { DELIVERY_STATUS_LABEL, DELIVERY_STATUS_VARIANT } from '@/lib/delivery';
+import { formatMoney } from '@/lib/utils';
 import { useRiderMe } from '@/lib/api/hooks/useRiderAuth';
 import { useAuthStore } from '@/lib/auth/authStore';
 import { useDeliveryStore } from '@/lib/store';
@@ -24,8 +25,9 @@ import { colors } from '@/lib/theme';
 
 export default function HomeScreen() {
   const router = useRouter();
-  const { user, profile } = useAuthStore();
-  const { setActiveOrderCount } = useDeliveryStore();
+  const user = useAuthStore((s) => s.user);
+  const profile = useAuthStore((s) => s.profile);
+  const setActiveOrderCount = useDeliveryStore((s) => s.setActiveOrderCount);
 
   const isOnline = Boolean(profile?.is_active);
   const isCar = profile?.vehicle_type === 'car';
@@ -45,22 +47,30 @@ export default function HomeScreen() {
     isLoading: loadingOrders,
     isRefetching: refetchingOrders,
     refetch: refetchOrders,
-  } = useAvailableBikeOrders({ isOnline, enabled: isBike });
+  } = useOffers({ isOnline, enabled: isBike });
+
+  const { data: activeJob, refetch: refetchActiveJob } = useActiveJob();
+  const { data: stats, isLoading: loadingStats, isError: statsError, refetch: refetchStats } = useRiderStats();
+  const bikeJob = activeJob?.kind === 'order' ? activeJob : null;
 
   const toggleShiftMutation = useToggleShiftStatus();
-  const locationBeaconMutation = useSendLocationBeacon();
 
   const activeProfile = meData?.driver_profile || profile;
 
   // Sync active orders badge in client store
+  // Depend on the derived number, not on `availableOrders` — its `= []` default is a
+  // fresh array every render, which re-ran this effect forever.
+  const activeCount = isCar
+    ? carRun?.stops
+      ? carRun.stops.filter((s) => s.status !== 'delivered' && s.status !== 'failed_attempt').length
+      : null
+    : isBike
+      ? availableOrders.length
+      : null;
+
   useEffect(() => {
-    if (isCar && carRun?.stops) {
-      const pending = carRun.stops.filter((s) => s.status !== 'delivered' && s.status !== 'failed_attempt').length;
-      setActiveOrderCount(pending);
-    } else if (isBike) {
-      setActiveOrderCount(availableOrders.length);
-    }
-  }, [isCar, isBike, carRun, availableOrders, setActiveOrderCount]);
+    if (activeCount !== null) setActiveOrderCount(activeCount);
+  }, [activeCount, setActiveOrderCount]);
 
   const dateLabel = new Intl.DateTimeFormat('en', {
     weekday: 'long',
@@ -75,47 +85,15 @@ export default function HomeScreen() {
     return 'Good evening';
   };
 
-  // Periodic GPS location beacon when online
-  useEffect(() => {
-    if (!isOnline) return;
-
-    let isMounted = true;
-    const sendLocationBeacon = async () => {
-      try {
-        const { status } = await Location.requestForegroundPermissionsAsync();
-        if (status !== 'granted') return;
-
-        const loc = await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.Balanced,
-        });
-
-        if (isMounted) {
-          locationBeaconMutation.mutate({
-            lat: loc.coords.latitude,
-            lng: loc.coords.longitude,
-            heading: loc.coords.heading ?? null,
-            speed: loc.coords.speed ?? null,
-          });
-        }
-      } catch {
-        // quiet beacon fail
-      }
-    };
-
-    sendLocationBeacon();
-    const interval = setInterval(sendLocationBeacon, 30000); // 30 sec beacon
-
-    return () => {
-      isMounted = false;
-      clearInterval(interval);
-    };
-  }, [isOnline]);
+  // GPS (idle ping and live tracking) runs app-wide in SessionEffects.
 
   const isRefreshing = refetchingCarRun || refetchingOrders;
 
   const onRefresh = async () => {
     await Promise.all([
       refetchMe(),
+      refetchStats(),
+      refetchActiveJob(),
       isCar ? refetchCarRun() : Promise.resolve(),
       isBike ? refetchOrders() : Promise.resolve(),
     ]);
@@ -124,14 +102,11 @@ export default function HomeScreen() {
   const handleToggleOnline = (val: boolean) => {
     toggleShiftMutation.mutate(val, {
       onSuccess: () => {
-        toast.success(
-          val
-            ? 'You are now Online and receiving deliveries'
-            : 'Shift ended. You are now Offline.'
-        );
+        toast.success(val ? "You're online and receiving orders" : "You're offline. Shift ended.");
       },
       onError: (err) => {
-        toast.error(extractErrorMessage(err) || 'Could not update shift status.');
+        // 422 when going offline with a job in hand: "Finish your current delivery…"
+        toast.error(extractErrorMessage(err));
       },
     });
   };
@@ -175,7 +150,7 @@ export default function HomeScreen() {
           {/* Branch & Vehicle Tags */}
           <View className="mt-3 flex-row items-center gap-2 flex-wrap">
             <Badge
-              label={`📍 ${activeProfile?.branch_name || 'Riyadh Branch'}`}
+              label={`📍 ${activeProfile?.branch_name || 'No branch'}`}
               variant="outline"
               className="bg-surface-muted"
             />
@@ -208,11 +183,15 @@ export default function HomeScreen() {
                     {isOnline ? "You're Online" : "You're Offline"}
                   </Text>
                   <Text className="text-xs text-text-secondary mt-0.5">
-                    {isOnline
-                      ? isCar
-                        ? 'Ready for scheduled catering runs'
-                        : 'Active and taking instant orders'
-                      : 'Toggle on to start shift and accept tasks'}
+                    {toggleShiftMutation.isPending
+                      ? isOnline
+                        ? 'Going offline…'
+                        : 'Going online…'
+                      : isOnline
+                        ? isCar
+                          ? 'Ready for scheduled catering runs'
+                          : 'Active and taking instant orders'
+                        : 'Toggle on to start shift and accept tasks'}
                   </Text>
                 </View>
               </View>
@@ -228,31 +207,66 @@ export default function HomeScreen() {
                 />
               )}
             </View>
+            {toggleShiftMutation.isError ? (
+              <View className="mt-3 rounded-xl bg-danger-soft border border-danger/20 px-3 py-2">
+                <Text className="text-xs font-semibold text-danger">
+                  {extractErrorMessage(toggleShiftMutation.error)}
+                </Text>
+              </View>
+            ) : null}
           </Card>
+
+          {/* Delivery in hand: always one tap away */}
+          {bikeJob ? (
+            <Card
+              onPress={() => router.push(`/order/${bikeJob.order_id}`)}
+              className="p-4 bg-brand-50 border-brand-200"
+            >
+              <View className="flex-row items-center justify-between">
+                <Text className="text-xs font-bold uppercase tracking-wider text-brand-700">
+                  Delivery in progress
+                </Text>
+                <Badge
+                  label={DELIVERY_STATUS_LABEL[bikeJob.delivery_status]}
+                  variant={DELIVERY_STATUS_VARIANT[bikeJob.delivery_status]}
+                />
+              </View>
+              <Text className="mt-1 text-lg font-black text-text-primary">Order #{bikeJob.order_id}</Text>
+              <Text className="text-xs font-bold text-brand-700 mt-1">Continue delivery →</Text>
+            </Card>
+          ) : null}
 
           {/* Today's Stats Cards */}
           <View className="flex-row gap-3">
             <Card className="flex-1 p-4 bg-surface">
               <Text className="text-xs font-semibold text-text-muted uppercase tracking-wider">
-                Today's Earnings
+                Delivered today
               </Text>
               <Text className="mt-1.5 text-2xl font-black text-text-primary">
-                SAR {isCar ? (carRun ? (carRun.completed_stops * 18).toFixed(2) : '0.00') : '142.50'}
+                {loadingStats ? '…' : statsError ? '–' : (stats?.today.completed ?? 0)}
               </Text>
-              <Text className="text-[11px] text-success font-medium mt-1">
-                +15% vs yesterday
+              <Text className="text-[11px] text-text-secondary font-medium mt-1">
+                {stats && stats.today.failed > 0
+                  ? `${stats.today.failed} failed`
+                  : `${stats?.week.completed ?? 0} this week`}
               </Text>
             </Card>
 
             <Card className="flex-1 p-4 bg-surface">
               <Text className="text-xs font-semibold text-text-muted uppercase tracking-wider">
-                Stops Delivered
+                {isCar ? 'Route progress' : 'Cash collected'}
               </Text>
-              <Text className="mt-1.5 text-2xl font-black text-text-primary">
-                {isCar ? (carRun ? `${carRun.completed_stops}/${carRun.total_stops}` : '0') : '6'}
+              <Text className="mt-1.5 text-2xl font-black text-text-primary" numberOfLines={1} adjustsFontSizeToFit>
+                {isCar
+                  ? carRun
+                    ? `${carRun.completed_stops}/${carRun.total_stops}`
+                    : '–'
+                  : loadingStats
+                    ? '…'
+                    : formatMoney(stats?.today.cash_collected ?? 0, stats?.currency)}
               </Text>
               <Text className="text-[11px] text-text-secondary font-medium mt-1">
-                {isCar ? 'Catering meal bags' : 'Instant orders'}
+                {isCar ? "Stops on today's run" : 'Today, cash on delivery'}
               </Text>
             </Card>
           </View>
@@ -349,11 +363,11 @@ export default function HomeScreen() {
                 </View>
                 <Text className="text-xs text-text-secondary mb-4">
                   {availableOrders.length > 0
-                    ? `${availableOrders.length} order(s) ready for pickup at ${activeProfile?.branch_name || 'your branch'}. Claim one to begin delivery.`
+                    ? `${availableOrders.length} order(s) ready for pickup at ${activeProfile?.branch_name || 'your branch'}. Accept one to start delivering.`
                     : 'No pending instant orders in your zone right now. We will notify you when kitchen finishes preparing next order.'}
                 </Text>
                 <Button
-                  label="View & Claim Orders"
+                  label="View orders"
                   size="md"
                   onPress={() => router.push('/(tabs)/orders')}
                 />
@@ -379,8 +393,8 @@ export default function HomeScreen() {
                 onPress={() => router.push('/(tabs)/earnings')}
               >
                 <Text className="text-2xl mb-1">💰</Text>
-                <Text className="text-xs font-bold text-text-primary">Earnings</Text>
-                <Text className="text-[10px] text-text-muted mt-0.5">Payout details</Text>
+                <Text className="text-xs font-bold text-text-primary">Stats</Text>
+                <Text className="text-[10px] text-text-muted mt-0.5">Your deliveries</Text>
               </Card>
 
               <Card

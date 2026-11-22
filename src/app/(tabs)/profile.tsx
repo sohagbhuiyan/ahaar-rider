@@ -1,8 +1,8 @@
+import Constants from 'expo-constants';
 import { useRouter } from 'expo-router';
 import {
   ActivityIndicator,
   Alert,
-  Pressable,
   RefreshControl,
   ScrollView,
   Text,
@@ -19,7 +19,8 @@ import { colors } from '@/lib/theme';
 
 export default function ProfileScreen() {
   const router = useRouter();
-  const { user, profile } = useAuthStore();
+  const user = useAuthStore((s) => s.user);
+  const profile = useAuthStore((s) => s.profile);
 
   // TanStack Query Hooks
   const { data: meData, refetch: refetchMe } = useRiderMe();
@@ -45,11 +46,9 @@ export default function ProfileScreen() {
         text: 'Sign Out',
         style: 'destructive',
         onPress: () => {
+          // Always signs out locally, even if the server call fails.
           logoutMutation.mutate(undefined, {
-            onSuccess: () => {
-              toast.success('Signed out successfully.');
-              router.replace('/');
-            },
+            onSettled: () => toast.success('Signed out.'),
           });
         },
       },
@@ -106,7 +105,7 @@ export default function ProfileScreen() {
               <View>
                 <Text className="text-[10px] uppercase font-bold text-white/70">Rider ID</Text>
                 <Text className="text-sm font-bold text-white mt-0.5">
-                  AR-{user?.id ? user.id.toString().padStart(5, '0') : '00001'}
+                  {user?.id ? `AR-${user.id.toString().padStart(5, '0')}` : '—'}
                 </Text>
               </View>
 
@@ -120,7 +119,7 @@ export default function ProfileScreen() {
               <View>
                 <Text className="text-[10px] uppercase font-bold text-white/70">Plate</Text>
                 <Text className="text-sm font-bold text-white mt-0.5">
-                  {activeProfile?.vehicle_plate || 'Assigned'}
+                  {activeProfile?.vehicle_plate || '—'}
                 </Text>
               </View>
             </View>
@@ -134,13 +133,13 @@ export default function ProfileScreen() {
             <View className="flex-row items-center justify-between">
               <View>
                 <Text className="text-base font-bold text-text-primary">
-                  {activeProfile?.branch_name || 'Riyadh Central Branch'}
+                  {activeProfile?.branch_name || 'No branch assigned'}
                 </Text>
                 <Text className="text-xs text-text-secondary mt-0.5">
                   Authorized for dispatch operations
                 </Text>
               </View>
-              <Badge label="VERIFIED HUB" variant="success" />
+              {activeProfile?.branch_name ? <Badge label="YOUR HUB" variant="success" /> : null}
             </View>
           </Card>
 
@@ -230,7 +229,7 @@ export default function ProfileScreen() {
                             Admin Rejection Reason:
                           </Text>
                           <Text className="text-xs text-danger mt-0.5">
-                            {doc.rejection_reason || 'Document copy was unclear. Please upload a clear photo.'}
+                            {doc.rejection_reason || 'No reason given. Contact support if unsure.'}
                           </Text>
                           <Button
                             label="Replace Rejected Document"
@@ -248,24 +247,6 @@ export default function ProfileScreen() {
             )}
           </Card>
 
-          {/* Payout Bank Info */}
-          <Card className="p-4 bg-surface">
-            <Text className="text-xs text-text-muted font-bold uppercase tracking-wider mb-1">
-              Payout Bank Account
-            </Text>
-            <View className="flex-row items-center justify-between">
-              <View>
-                <Text className="text-sm font-bold text-text-primary">
-                  Al Rajhi Bank (Riyadh)
-                </Text>
-                <Text className="text-xs font-mono text-text-muted mt-0.5">
-                  SA•••• •••• •••• 9102
-                </Text>
-              </View>
-              <Badge label="WEEKLY PAYOUT" variant="brand" />
-            </View>
-          </Card>
-
           {/* App Info & Sign Out */}
           <View className="gap-3">
             <Button
@@ -276,7 +257,7 @@ export default function ProfileScreen() {
               onPress={handleSignOut}
             />
             <Text className="text-[11px] text-center text-text-muted">
-              AHAAR Rider App v1.0.0 · Production Delivery Hub
+              AHAAR Rider · v{Constants.expoConfig?.version ?? '1.0.0'}
             </Text>
           </View>
         </View>

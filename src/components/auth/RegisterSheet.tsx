@@ -1,14 +1,15 @@
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useRouter } from 'expo-router';
 import { useRef, useState } from 'react';
 import { Controller, useForm, useWatch } from 'react-hook-form';
-import { Pressable, Text, View, type TextInput } from 'react-native';
+import { ActivityIndicator, Pressable, Text, View, type TextInput } from 'react-native';
 import { toast } from 'sonner-native';
 import { z } from 'zod';
 
 import { Button, Input, PasswordInput, Sheet } from '@/components/ui';
 import { extractErrorMessage } from '@/lib/api/client';
 import { useRegister } from '@/lib/api/hooks/useRiderAuth';
+import { useBranches } from '@/lib/api/hooks/useRiderShift';
+import { colors } from '@/lib/theme';
 
 const schema = z
   .object({
@@ -32,14 +33,7 @@ interface Props {
   onOpenLogin: () => void;
 }
 
-const BRANCHES = [
-  { id: 1, name: 'Central Hub', area: 'Al Olaya / King Fahd' },
-  { id: 2, name: 'North Hub', area: 'Al Malqa / Anas Ibn Malik' },
-  { id: 3, name: 'East Hub', area: 'Al Rawdah / Khurais' },
-];
-
 export function RegisterSheet({ open, onClose, onOpenLogin }: Props) {
-  const router = useRouter();
   const emailRef = useRef<TextInput>(null);
   const phoneRef = useRef<TextInput>(null);
   const passwordRef = useRef<TextInput>(null);
@@ -47,14 +41,21 @@ export function RegisterSheet({ open, onClose, onOpenLogin }: Props) {
 
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const registerMutation = useRegister();
+  const branches = useBranches(open);
 
-  const { control, handleSubmit, reset, setValue } = useForm<FormValues>({
+  const {
+    control,
+    handleSubmit,
+    reset,
+    setValue,
+    formState: { errors },
+  } = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues: {
       name: '',
       email: '',
       phone: '',
-      branch_id: 1,
+      branch_id: 0,
       password: '',
       password_confirmation: '',
     },
@@ -74,7 +75,7 @@ export function RegisterSheet({ open, onClose, onOpenLogin }: Props) {
       onSuccess: () => {
         toast.success('Registration submitted for initial review!');
         handleClose();
-        router.replace('/application-status');
+        // The gateway routes to the application status screen.
       },
       onError: (err) => {
         const msg = extractErrorMessage(err) || 'Registration failed';
@@ -181,7 +182,24 @@ export function RegisterSheet({ open, onClose, onOpenLogin }: Props) {
         <View className="gap-1.5">
           <Text className="text-sm font-semibold text-text-primary">Operating Branch Hub</Text>
           <View className="gap-2">
-            {BRANCHES.map((b) => {
+            {branches.isLoading ? (
+              <View className="items-center rounded-2xl border border-border p-4">
+                <ActivityIndicator color={colors.brand[500]} />
+              </View>
+            ) : branches.isError ? (
+              <Pressable
+                onPress={() => branches.refetch()}
+                className="rounded-2xl border border-danger/30 bg-danger-soft p-3.5"
+              >
+                <Text className="text-sm font-semibold text-danger">
+                  {extractErrorMessage(branches.error)}
+                </Text>
+                <Text className="text-xs font-bold text-danger mt-1">Tap to retry</Text>
+              </Pressable>
+            ) : (branches.data ?? []).length === 0 ? (
+              <Text className="text-sm text-text-secondary">No branches are taking riders right now.</Text>
+            ) : null}
+            {(branches.data ?? []).map((b) => {
               const isSelected = selectedBranch === b.id;
               return (
                 <Pressable
@@ -193,11 +211,13 @@ export function RegisterSheet({ open, onClose, onOpenLogin }: Props) {
                       : 'border-border bg-surface'
                   }`}
                 >
-                  <View>
+                  <View className="flex-1 mr-3">
                     <Text className={`font-bold text-sm ${isSelected ? 'text-brand-700' : 'text-text-primary'}`}>
                       {b.name}
                     </Text>
-                    <Text className="text-xs text-text-secondary mt-0.5">{b.area}</Text>
+                    {b.address ? (
+                      <Text className="text-xs text-text-secondary mt-0.5" numberOfLines={2}>{b.address}</Text>
+                    ) : null}
                   </View>
                   <View
                     className={`h-5 w-5 rounded-full border items-center justify-center ${
@@ -210,6 +230,9 @@ export function RegisterSheet({ open, onClose, onOpenLogin }: Props) {
               );
             })}
           </View>
+          {errors.branch_id ? (
+            <Text className="text-xs font-medium text-danger">{errors.branch_id.message}</Text>
+          ) : null}
         </View>
 
         <Controller

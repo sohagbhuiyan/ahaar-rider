@@ -1,11 +1,8 @@
-import * as ImagePicker from 'expo-image-picker';
-import * as Linking from 'expo-linking';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Image,
   Modal,
   Pressable,
   ScrollView,
@@ -16,33 +13,57 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { toast } from 'sonner-native';
 
-import { Badge, Button, Card } from '@/components/ui';
-import { extractErrorMessage } from '@/lib/api/client';
+import { Image } from 'expo-image';
+
+import { RequireSession } from '@/components/session/RequireSession';
+import { Badge, Button, Card, ErrorState } from '@/components/ui';
+import { errorData, errorStatus } from '@/lib/api/client';
 import {
   useCompleteDelivery,
   useDeliveryDetail,
-  useReportIssue,
+  useReportDeliveryIssue,
   useVerifyPackage,
 } from '@/lib/api/hooks/useRiderDeliveries';
+import {
+  actionErrorMessage,
+  appendCoords,
+  callPhone,
+  currentCoords,
+  formatTime,
+  openDirections,
+  photoPart,
+  POD_OPTIONS,
+  STOP_STATUS_LABEL,
+  takePhoto,
+} from '@/lib/delivery';
+import type { PodType } from '@/lib/api/types';
 import { colors } from '@/lib/theme';
 
 export default function DeliveryStopScreen() {
+  return (
+    <RequireSession>
+      <DeliveryStopContent />
+    </RequireSession>
+  );
+}
+
+function DeliveryStopContent() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
 
   // TanStack Query Hooks
-  const { data: delivery, isLoading, refetch } = useDeliveryDetail(id || '');
+  const { data: delivery, isLoading, error, refetch } = useDeliveryDetail(id || '');
   const verifyMutation = useVerifyPackage(id || '');
   const completeMutation = useCompleteDelivery(id || '');
-  const reportIssueMutation = useReportIssue(id || '');
+  const reportIssueMutation = useReportDeliveryIssue(id || '');
 
   // Verification State
-  const [isBagVerified, setIsBagVerified] = useState(false);
+  const [bagVerified, setIsBagVerified] = useState(false);
   const [verifyModalOpen, setVerifyModalOpen] = useState(false);
   const [scannedCodeInput, setScannedCodeInput] = useState('');
 
   // PoD Completion State
-  const [podType, setPodType] = useState<'doorstep' | 'handed_to_customer' | 'reception' | 'security_gate'>('doorstep');
+  const [podType, setPodType] = useState<PodType>('doorstep');
   const [podPhoto, setPodPhoto] = useState<string | null>(null);
 
   // Exception / Customer Unavailable State
@@ -51,11 +72,7 @@ export default function DeliveryStopScreen() {
   const [exceptionNotes, setExceptionNotes] = useState('');
   const [timerSeconds, setTimerSeconds] = useState(300); // 5 min timer
 
-  useEffect(() => {
-    if (delivery?.status === 'delivered') {
-      setIsBagVerified(true);
-    }
-  }, [delivery]);
+  const isBagVerified = bagVerified || delivery?.status === 'delivered';
 
   // 5-minute countdown for unreachable customer
   useEffect(() => {
@@ -72,19 +89,14 @@ export default function DeliveryStopScreen() {
       toast.error('Customer phone number not available.');
       return;
     }
-    Linking.openURL(`tel:${delivery.customer_phone}`);
+    callPhone(delivery.customer_phone);
   };
 
   // Quick Action: Open GPS Navigation
   const handleOpenNavigation = () => {
     if (!delivery?.address) return;
     const { lat, lng, line1, area } = delivery.address;
-    if (lat && lng) {
-      Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`);
-    } else {
-      const destination = encodeURIComponent(`${line1}, ${area || 'Riyadh'}`);
-      Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${destination}`);
-    }
+    openDirections({ lat, lng, query: [line1, area].filter(Boolean).join(', ') });
   };
 
   // Step 1: Bag Barcode / QR Code Verification
@@ -100,13 +112,18 @@ export default function DeliveryStopScreen() {
         if (res?.matched) {
           setIsBagVerified(true);
           setVerifyModalOpen(false);
-          toast.success('Package Verified! Correct meal bag for this customer.');
-        } else {
-          toast.error('Wrong Bag! This package belongs to another stop.');
+          setScannedCodeInput('');
+          toast.success('Package verified: correct bag for this customer.');
         }
       },
       onError: (err) => {
-        toast.error(extractErrorMessage(err) || 'Wrong package for this stop! Check bag tag.');
+        // A wrong bag is a 422 that names the stop it belongs to (on your route).
+        const other = errorData<{ belonging_stop?: number | null }>(err)?.belonging_stop;
+        if (errorStatus(err) === 422 && other) {
+          toast.error(`Wrong bag: this one belongs to stop #${other}.`);
+        } else {
+          toast.error(actionErrorMessage(err));
+        }
       },
     });
   };
@@ -114,28 +131,15 @@ export default function DeliveryStopScreen() {
   // Step 2: Take Proof-of-Delivery Photo
   const handleTakePodPhoto = async () => {
     try {
-      const { status } = await ImagePicker.requestCameraPermissionsAsync();
-      if (status !== 'granted') {
-        toast.error('Camera permission is required for proof of delivery.');
-        return;
-      }
-
-      const result = await ImagePicker.launchCameraAsync({
-        allowsEditing: false,
-        quality: 0.7,
-      });
-
-      if (!result.canceled && result.assets[0]?.uri) {
-        setPodPhoto(result.assets[0].uri);
-        toast.success('Delivery photo captured.');
-      }
+      const uri = await takePhoto();
+      if (uri) setPodPhoto(uri);
     } catch {
       toast.error('Failed to open camera.');
     }
   };
 
   // Step 3: Complete Delivery
-  const handleCompleteDelivery = () => {
+  const handleCompleteDelivery = async () => {
     if (!isBagVerified) {
       Alert.alert(
         'Verification Required',
@@ -148,32 +152,27 @@ export default function DeliveryStopScreen() {
     const formData = new FormData();
     formData.append('pod_type', podType);
 
-    if (podPhoto) {
-      const filename = podPhoto.split('/').pop() || 'pod.jpg';
-      const match = /\.(\w+)$/.exec(filename);
-      const type = match ? `image/${match[1]}` : 'image/jpeg';
-      formData.append('photo', {
-        uri: podPhoto,
-        name: filename,
-        type,
-      } as any);
-    }
+    if (podPhoto) formData.append('photo', photoPart(podPhoto));
+    appendCoords(formData, await currentCoords());
 
     completeMutation.mutate(formData, {
       onSuccess: () => {
-        toast.success('Delivery Completed Successfully! 🎉');
+        toast.success('Delivery completed.');
         router.back();
       },
       onError: (err) => {
-        toast.error(extractErrorMessage(err) || 'Failed to complete delivery.');
+        toast.error(actionErrorMessage(err));
       },
     });
   };
 
   // Exception Submission
   const handleReportIssue = () => {
+    const form = new FormData();
+    form.append('reason', exceptionReason);
+    if (exceptionNotes.trim()) form.append('notes', exceptionNotes.trim().slice(0, 500));
     reportIssueMutation.mutate(
-      { reason: exceptionReason, notes: exceptionNotes },
+      form,
       {
         onSuccess: () => {
           toast.warning('Exception reported. Proceeding to next stop.');
@@ -181,7 +180,7 @@ export default function DeliveryStopScreen() {
           router.back();
         },
         onError: (err) => {
-          toast.error(extractErrorMessage(err) || 'Could not record exception.');
+          toast.error(actionErrorMessage(err));
         },
       }
     );
@@ -199,6 +198,14 @@ export default function DeliveryStopScreen() {
   }
 
   if (!delivery) {
+    if (error) {
+      return (
+        <SafeAreaView className="flex-1 bg-surface-muted items-center justify-center">
+          <ErrorState message={actionErrorMessage(error)} onRetry={() => refetch()} />
+          <Button label="Go Back" variant="ghost" fullWidth={false} onPress={() => router.back()} />
+        </SafeAreaView>
+      );
+    }
     return (
       <SafeAreaView className="flex-1 bg-surface-muted p-6 items-center justify-center">
         <Text className="text-3xl mb-2">⚠️</Text>
@@ -232,7 +239,7 @@ export default function DeliveryStopScreen() {
         </View>
 
         <Badge
-          label={delivery.status.toUpperCase()}
+          label={STOP_STATUS_LABEL[delivery.status]?.toUpperCase() ?? delivery.status}
           variant={isDelivered ? 'success' : isFailed ? 'danger' : 'brand'}
         />
       </View>
@@ -380,15 +387,10 @@ export default function DeliveryStopScreen() {
 
               {/* PoD Type Dropdown / Grid */}
               <View className="flex-row flex-wrap gap-2 mb-3">
-                {[
-                  { id: 'doorstep', label: '🚪 Doorstep' },
-                  { id: 'handed_to_customer', label: '🤝 In-Hand' },
-                  { id: 'reception', label: '🏢 Reception' },
-                  { id: 'security_gate', label: '🛡️ Gate' },
-                ].map((item) => (
+                {POD_OPTIONS.map((item) => (
                   <Pressable
                     key={item.id}
-                    onPress={() => setPodType(item.id as any)}
+                    onPress={() => setPodType(item.id)}
                     className={`px-3 py-2 rounded-xl border ${
                       podType === item.id
                         ? 'bg-brand-50 border-brand-500'
@@ -400,7 +402,7 @@ export default function DeliveryStopScreen() {
                         podType === item.id ? 'text-brand-700' : 'text-text-secondary'
                       }`}
                     >
-                      {item.label}
+                      {item.icon} {item.label}
                     </Text>
                   </Pressable>
                 ))}
@@ -409,7 +411,7 @@ export default function DeliveryStopScreen() {
               {/* Photo Snapper */}
               {podPhoto ? (
                 <View className="relative rounded-2xl overflow-hidden border border-border">
-                  <Image source={{ uri: podPhoto }} className="h-44 w-full bg-surface-muted" />
+                  <Image source={{ uri: podPhoto }} style={{ height: 176, width: '100%' }} contentFit="cover" />
                   <Pressable
                     onPress={() => setPodPhoto(null)}
                     className="absolute top-2 right-2 bg-black/60 rounded-full px-2.5 py-1"
@@ -457,13 +459,16 @@ export default function DeliveryStopScreen() {
                 </Text>
               </View>
               <Text className="text-xs text-text-secondary">
-                Delivered at {delivery.pod?.delivered_at || 'Just now'} via {delivery.pod?.pod_type || 'doorstep'}
+                Delivered {formatTime(delivery.pod?.delivered_at) ? `at ${formatTime(delivery.pod?.delivered_at)}` : 'just now'}
+                {delivery.pod?.pod_type
+                  ? ` · ${POD_OPTIONS.find((p) => p.id === delivery.pod?.pod_type)?.label ?? delivery.pod.pod_type}`
+                  : ''}
               </Text>
               {delivery.pod?.pod_photo_url && (
                 <Image
                   source={{ uri: delivery.pod.pod_photo_url }}
-                  className="mt-3 h-48 w-full rounded-xl"
-                  resizeMode="cover"
+                  style={{ marginTop: 12, height: 192, width: '100%', borderRadius: 12 }}
+                  contentFit="cover"
                 />
               )}
             </Card>
@@ -528,15 +533,6 @@ export default function DeliveryStopScreen() {
               />
             </View>
 
-            {/* Quick 1-tap match for rider */}
-            <Pressable
-              onPress={() => handleVerifyCode(delivery.verification_code || `AH-${delivery.delivery_id}`)}
-              className="mt-3 p-3 rounded-xl bg-surface-muted border border-border items-center"
-            >
-              <Text className="text-xs font-bold text-brand-600">
-                ⚡ Tap to Auto-Match ({delivery.verification_code || `AH-${delivery.delivery_id}`})
-              </Text>
-            </Pressable>
           </View>
 
           <View className="gap-2.5 pt-4 border-t border-border">
