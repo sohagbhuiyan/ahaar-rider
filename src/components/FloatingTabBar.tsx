@@ -170,7 +170,7 @@ function TabItem({
                 height: 16,
                 paddingHorizontal: 4,
                 borderRadius: 8,
-                backgroundColor: colors.brand[700],
+                backgroundColor: ACTIVE_COLOR,
                 alignItems: "center",
                 justifyContent: "center",
                 borderWidth: 1.5,
