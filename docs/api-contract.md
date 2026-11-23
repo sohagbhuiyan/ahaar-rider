@@ -298,27 +298,22 @@ Uploads, vehicle changes and submission are accepted only while `approval_status
 
 ## 6. Car Route (Catering) & Bike (Instant) APIs
 
-### 6.1 Get Assigned Car Route Manifest
-* **`GET /api/v1/rider/runs/today`**
-* **Response `200 OK`:** Returns sequenced route stops with addresses, meal items, and verification codes.
+> The full, current delivery contract is `ahaar-backend/docs/delivery-api.md` ("Rider app" and "Box labels"). The old bag codes are gone (2026-11-23): `accept-handover` and `verify-package` answer `410 app_update_required`.
 
-### 6.2 Kitchen Bulk Pickup Handover
-* **`POST /api/v1/rider/runs/{id}/accept-handover`**
-* **Request:**
-  ```json
-  { "scanned_verification_codes": ["AH-482-L1", "AH-483-L1"] }
-  ```
+### 6.1 Car routes
+* **`GET /api/v1/rider/runs/today`**: the route that matters now (`draft → ready → loading → dispatched → completed`), with `loading` progress, `can_start` and stops (`is_loaded`). `GET /api/v1/rider/runs` lists all of today's routes (one per meal slot).
 
-### 6.3 Doorstep Bag QR Verification
-* **`POST /api/v1/rider/deliveries/{id}/verify-package`**
-* **Request:**
-  ```json
-  { "scanned_code": "AH-482-L1" }
-  ```
+### 6.2 Loading scan (kitchen)
+* **`POST /api/v1/rider/runs/{id}/load`** `{ "token": "AHR-9X4K2M" }` → `{ result: loaded|duplicate, delivery_id, stop_sequence, progress }`. Another route's box: `422 wrong_run` (route hint only, never customer details). Draft route: `409 run_not_ready`.
+* **`POST /api/v1/rider/runs/{id}/start`** → Run; `409 load_incomplete` until every box is loaded or an admin override is on.
+
+### 6.3 Quick Scan / door scan
+* **`GET /api/v1/rider/delivery/scan/{token}`** → the stop behind any box on your route, plus `next_action` (`load|deliver|none`) and `maps_url`. Dead label `410`, unknown `404`, another route `422 wrong_run`.
+* The QR on the sticker is the token text only (`AHR-` + 6 characters), valid at most 24 h.
 
 ### 6.4 Complete Delivery (Proof-of-Delivery)
 * **`POST /api/v1/rider/deliveries/{id}/complete`**
-* **Request:** `pod_type`, `photo`, `customer_signature`, `lat`, `lng`.
+* **Request:** `token` (the box QR scanned at the door), `pod_type`, `photo`, `customer_signature`, `notes`, `lat`, `lng`. Another stop's box: `422 wrong_package` with `belonging_stop`.
 
 ### 6.5 Report Delivery Exception
 * **`POST /api/v1/rider/deliveries/{id}/report-issue`**
@@ -327,5 +322,5 @@ Uploads, vehicle changes and submission are accepted only while `approval_status
 ### 6.6 Bike Instant Orders
 * `GET  /api/v1/rider/orders/available`
 * `POST /api/v1/rider/orders/{id}/claim` (Pessimistic lock)
-* `POST /api/v1/rider/orders/{id}/pickup`
+* `POST /api/v1/rider/orders/{id}/pickup` (one tap, no code or QR)
 * `POST /api/v1/rider/orders/{id}/complete` (PoD + COD)

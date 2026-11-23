@@ -103,7 +103,7 @@ type ApiErrorBody = {
   data?: Record<string, unknown>;
 };
 
-/** The dispatch `reason` of a failed request (`already_taken`, `wrong_code`, ...), if any. */
+/** The dispatch `reason` of a failed request (`already_taken`, `wrong_run`, ...), if any. */
 export function errorReason(error: unknown): DispatchReason | null {
   if (isAxiosError(error)) {
     return (error.response?.data as ApiErrorBody | undefined)?.reason ?? null;
@@ -115,7 +115,7 @@ export function errorStatus(error: unknown): number | null {
   return isAxiosError(error) ? (error.response?.status ?? null) : null;
 }
 
-/** The `data` block an error response carried (e.g. verify-package's `belonging_stop`). */
+/** The `data` block an error response carried (e.g. wrong_package's `belonging_stop`, wrong_run's route hint). */
 export function errorData<T = Record<string, unknown>>(error: unknown): T | null {
   if (isAxiosError(error)) {
     return ((error.response?.data as ApiErrorBody | undefined)?.data as T) ?? null;

@@ -18,7 +18,7 @@ import { extractErrorMessage } from '@/lib/api/client';
 import { useUnreadNotificationCount } from '@/lib/api/hooks/useNotifications';
 import { useActiveJob, useCarRunsToday, useOffers, useRiderStats } from '@/lib/api/hooks/useRiderDeliveries';
 import { useToggleShiftStatus } from '@/lib/api/hooks/useRiderShift';
-import { DELIVERY_STATUS_LABEL, DELIVERY_STATUS_VARIANT } from '@/lib/delivery';
+import { DELIVERY_STATUS_LABEL, DELIVERY_STATUS_VARIANT, RUN_STATUS_LABEL } from '@/lib/delivery';
 import { formatMoney } from '@/lib/utils';
 import { useRiderMe } from '@/lib/api/hooks/useRiderAuth';
 import { useAuthStore } from '@/lib/auth/authStore';
@@ -319,7 +319,7 @@ export default function HomeScreen() {
                       </Text>
                     </View>
                     <Badge
-                      label={carRun.status.toUpperCase()}
+                      label={RUN_STATUS_LABEL[carRun.status].toUpperCase()}
                       variant={carRun.status === 'dispatched' ? 'brand' : carRun.status === 'completed' ? 'success' : 'warning'}
                     />
                   </View>
@@ -344,9 +344,11 @@ export default function HomeScreen() {
                   <View className="pt-2 flex-row gap-2">
                     <Button
                       label={
-                        carRun.status === 'ready'
-                          ? 'Scan Kitchen Bags & Depart'
-                          : 'View Manifest & Next Stop'
+                        carRun.status === 'ready' || carRun.status === 'loading'
+                          ? 'Load the car'
+                          : carRun.status === 'draft'
+                            ? 'View planned stops'
+                            : 'View route & next stop'
                       }
                       size="md"
                       className="flex-1"

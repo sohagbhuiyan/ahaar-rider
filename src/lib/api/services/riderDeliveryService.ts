@@ -1,5 +1,5 @@
 import { apiClient, multipartConfig } from '../client';
-import type { ActiveJob, CarRun, CarRunStop, Job, Offer, RiderStats } from '../types';
+import type { ActiveJob, CarRun, CarRunStop, Job, LoadResult, Offer, QuickScan, RiderStats } from '../types';
 
 type Coords = { lat?: number; lng?: number };
 
@@ -35,34 +35,37 @@ export const riderDeliveryService = {
     return data.data;
   },
 
-  acceptHandover: async (
-    runId: number,
-    scannedCodes: string[],
-  ): Promise<{
-    all_matched: boolean;
-    matched_count?: number;
-    missing_count?: number;
-    missing_codes?: string[];
-    total_scanned?: number;
-  }> => {
-    const { data } = await apiClient.post(`/rider/runs/${runId}/accept-handover`, {
-      scanned_codes: scannedCodes,
-    });
+  /** All of today's routes, by slot time (breakfast, lunch and dinner are separate routes). */
+  getRuns: async (): Promise<CarRun[]> => {
+    const { data } = await apiClient.get<{ data: CarRun[] }>('/rider/runs');
+    return data.data ?? [];
+  },
+
+  /**
+   * Loading scan: one box into the car. `duplicate` when it was already loaded.
+   * Another route's box is 422 `wrong_run`; a draft route is 409 `run_not_ready`.
+   */
+  loadBox: async (runId: number, token: string): Promise<LoadResult> => {
+    const { data } = await apiClient.post<{ data: LoadResult }>(`/rider/runs/${runId}/load`, { token });
     return data.data;
   },
 
-  /** A wrong bag answers 422 with `data: { matched: false, scanned_code, belonging_stop }`. */
-  verifyPackage: async (
-    deliveryId: number | string,
-    scannedCode: string,
-  ): Promise<{ matched: boolean; delivery_id?: number; stop_sequence?: number }> => {
-    const { data } = await apiClient.post(`/rider/deliveries/${deliveryId}/verify-package`, {
-      scanned_code: scannedCode,
-    });
+  /** Leave the kitchen. 409 `load_incomplete` (with `data.progress`) until every box is in. */
+  startRun: async (runId: number): Promise<CarRun> => {
+    const { data } = await apiClient.post<{ data: CarRun }>(`/rider/runs/${runId}/start`);
     return data.data;
   },
 
-  /** Multipart `{ pod_type, photo?, customer_signature?, lat?, lng? }`. */
+  /** Quick Scan: the stop behind any box on your route. Dead label 410, unknown 404, other route 422 `wrong_run`. */
+  scanBox: async (token: string): Promise<QuickScan> => {
+    const { data } = await apiClient.get<{ data: QuickScan }>(`/rider/delivery/scan/${encodeURIComponent(token)}`);
+    return data.data;
+  },
+
+  /**
+   * Multipart `{ token, pod_type, photo?, customer_signature?, notes?, lat?, lng? }`:
+   * `token` is the box QR scanned at the door. Another stop's box is 422 `wrong_package`.
+   */
   completeDelivery: async (
     deliveryId: number | string,
     formData: FormData,
@@ -118,12 +121,9 @@ export const riderDeliveryService = {
     return data.data;
   },
 
-  /** `code` is the 4-digit bag code from the kitchen; a mismatch is 422 `wrong_code`. */
-  pickup: async (orderId: number, code: string, coords: Coords = {}): Promise<Job> => {
-    const { data } = await apiClient.post<{ data: Job }>(`/rider/orders/${orderId}/pickup`, {
-      code,
-      ...coords,
-    });
+  /** One tap, no code: instant orders carry no bag code. */
+  pickup: async (orderId: number, coords: Coords = {}): Promise<Job> => {
+    const { data } = await apiClient.post<{ data: Job }>(`/rider/orders/${orderId}/pickup`, coords);
     return data.data;
   },
 

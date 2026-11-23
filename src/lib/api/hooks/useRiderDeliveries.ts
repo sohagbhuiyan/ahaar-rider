@@ -2,10 +2,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useIsFocused } from 'expo-router';
 
 import { useAuthStore } from '../../auth/authStore';
-import { errorReason } from '../client';
+import { errorData, errorReason } from '../client';
 import { queryKeys } from '../queryKeys';
 import { riderDeliveryService } from '../services/riderDeliveryService';
-import type { ActiveJob, Job, Offer } from '../types';
+import type { ActiveJob, CarRun, Job, LoadProgress, Offer } from '../types';
 
 const ACTIVE_JOB_POLL_MS = 20_000;
 const OFFERS_POLL_MS = 10_000;
@@ -67,7 +67,11 @@ export function useCarRunsToday(options?: { isOnline?: boolean; enabled?: boolea
     enabled,
     staleTime: 1000 * 15,
     // `run.assigned` pushes refetch immediately; this catches missed pushes.
-    refetchInterval: isOnline ? 30_000 : false,
+    refetchInterval: (query) => {
+      if (!isOnline) return false;
+      const status = query.state.data?.status;
+      return status === 'ready' || status === 'loading' ? 10_000 : 30_000;
+    },
     refetchIntervalInBackground: false,
   });
 }
@@ -90,23 +94,52 @@ function invalidateRun(qc: QC, deliveryId?: number | string) {
   }
 }
 
-export function useAcceptHandover() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ runId, scannedCodes }: { runId: number; scannedCodes: string[] }) =>
-      riderDeliveryService.acceptHandover(runId, scannedCodes),
-    onSuccess: () => invalidateRun(qc),
+/** Put a fresh progress on the cached route so the loading screen moves at once. */
+function storeProgress(qc: QC, runId: number, progress: LoadProgress, deliveryId?: number) {
+  qc.setQueryData<CarRun | null>(queryKeys.deliveries.runsToday(), (run) => {
+    if (!run || run.run_id !== runId) return run;
+    return {
+      ...run,
+      status: run.status === 'ready' ? 'loading' : run.status,
+      loading: progress,
+      can_start: progress.is_complete || progress.override,
+      stops: run.stops.map((s) => (s.delivery_id === deliveryId ? { ...s, is_loaded: true } : s)),
+    };
   });
 }
 
-export function useVerifyPackage(deliveryId: number | string) {
+/** Loading scan. Keeps going on errors: the screen shows them and the rider scans the next box. */
+export function useLoadBox(runId: number) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (scannedCode: string) => riderDeliveryService.verifyPackage(deliveryId, scannedCode),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: queryKeys.deliveries.detail(deliveryId) });
+    mutationFn: (token: string) => riderDeliveryService.loadBox(runId, token),
+    onSuccess: (res) => storeProgress(qc, runId, res.progress, res.delivery_id),
+    onError: (error) => {
+      // The route changed under us (kitchen not ready, cancelled, reassigned).
+      const reason = errorReason(error);
+      if (reason === 'run_not_ready' || reason === 'not_yours' || reason === 'invalid_transition') invalidateRun(qc);
     },
   });
+}
+
+export function useStartRun() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (runId: number) => riderDeliveryService.startRun(runId),
+    onSuccess: (run) => {
+      qc.setQueryData(queryKeys.deliveries.runsToday(), run);
+      invalidateRun(qc);
+    },
+    onError: (error, runId) => {
+      const progress = errorData<{ progress?: LoadProgress }>(error)?.progress;
+      if (progress) storeProgress(qc, runId, progress);
+    },
+  });
+}
+
+/** Quick Scan: any box in the car → its stop. A lookup, never a state change. */
+export function useScanBox() {
+  return useMutation({ mutationFn: (token: string) => riderDeliveryService.scanBox(token) });
 }
 
 export function useCompleteDelivery(deliveryId: number | string) {
@@ -209,14 +242,14 @@ type Coords = { lat?: number; lng?: number };
 
 export type JobStep =
   | { action: 'heading_to_pickup'; coords?: Coords }
-  | { action: 'pickup'; code: string; coords?: Coords }
+  | { action: 'pickup'; coords?: Coords }
   | { action: 'on_the_way'; coords?: Coords }
   | { action: 'complete'; formData: FormData }
   | { action: 'report_issue'; formData: FormData };
 
 function runStep(orderId: number, step: JobStep): Promise<Job> {
   if (step.action === 'heading_to_pickup') return riderDeliveryService.headingToPickup(orderId, step.coords);
-  if (step.action === 'pickup') return riderDeliveryService.pickup(orderId, step.code, step.coords);
+  if (step.action === 'pickup') return riderDeliveryService.pickup(orderId, step.coords);
   if (step.action === 'on_the_way') return riderDeliveryService.onTheWay(orderId, step.coords);
   if (step.action === 'complete') return riderDeliveryService.complete(orderId, step.formData);
   return riderDeliveryService.reportIssue(orderId, step.formData);

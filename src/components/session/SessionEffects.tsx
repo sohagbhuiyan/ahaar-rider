@@ -115,18 +115,30 @@ function usePushHandling(enabled: boolean) {
           toast.warning(
             data.reason === 'unassigned'
               ? `Order #${orderId ?? ''} was reassigned by dispatch.`
-              : `Order #${orderId ?? ''} was cancelled.`,
+              : data.reason === 'timeout'
+                ? `Order #${orderId ?? ''} went to other riders: it was not accepted in time.`
+                : `Order #${orderId ?? ''} was cancelled.`,
           );
           break;
         case 'job.updated':
-          // The kitchen confirmed the bag handover: the job is now picked_up.
+          // ready: bag at the counter · handed_over: now picked_up · delivered: dispatch closed it.
           qc.invalidateQueries({ queryKey: queryKeys.activeJob });
           if (orderId) qc.invalidateQueries({ queryKey: queryKeys.orders.detail(orderId) });
-          toast.success('Kitchen confirmed handover');
+          toast.success(
+            data.reason === 'ready'
+              ? 'The bag is ready at the kitchen counter.'
+              : data.reason === 'delivered'
+                ? `Dispatch marked order #${orderId ?? ''} as delivered. You are free for new orders.`
+                : 'Kitchen confirmed handover',
+          );
           break;
         case 'run.assigned':
-          qc.invalidateQueries({ queryKey: queryKeys.deliveries.runsToday() });
+        case 'run.ready':
+        case 'run.updated':
+          qc.invalidateQueries({ queryKey: queryKeys.deliveries.all });
           qc.invalidateQueries({ queryKey: queryKeys.activeJob });
+          if (data.type === 'run.ready') toast.success('Your route is packed and labelled. Time to load the car.');
+          else if (data.type === 'run.updated') toast.info(RUN_UPDATE_MESSAGE[data.reason ?? ''] ?? 'Your route changed.');
           break;
       }
     });
@@ -165,6 +177,14 @@ function usePushHandling(enabled: boolean) {
     };
   }, [enabled, router, qc]);
 }
+
+/** `run.updated` reasons (docs/delivery-api.md). */
+const RUN_UPDATE_MESSAGE: Record<string, string> = {
+  stops_changed: 'Dispatch changed the stops on your route.',
+  unassigned: 'Dispatch gave your route to another driver.',
+  cancelled: 'Your route was cancelled.',
+  override: 'Dispatch allowed you to start without every box.',
+};
 
 type TrackingMode = 'off' | 'background' | 'foreground';
 

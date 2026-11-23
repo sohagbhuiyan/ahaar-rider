@@ -24,6 +24,8 @@ const TYPE_ICON: Record<string, { icon: string; tone: string }> = {
   'job.updated': { icon: '🛍️', tone: 'bg-success-soft border-success/20' },
   'job.cancelled': { icon: '⛔', tone: 'bg-danger-soft border-danger/20' },
   'run.assigned': { icon: '🚗', tone: 'bg-brand-50 border-brand-200' },
+  'run.ready': { icon: '📦', tone: 'bg-brand-50 border-brand-200' },
+  'run.updated': { icon: '🔁', tone: 'bg-surface-muted border-border' },
 };
 const DEFAULT_ICON = { icon: '🔔', tone: 'bg-surface-muted border-border' };
 

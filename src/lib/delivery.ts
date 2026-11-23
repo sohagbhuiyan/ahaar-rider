@@ -3,7 +3,7 @@ import { Linking } from 'react-native';
 
 import type { BadgeVariant } from '@/components/ui';
 import { errorReason, extractErrorMessage } from '@/lib/api/client';
-import type { ActiveJob, CarRunStop, DeliveryStatus, DispatchReason, Job, PodType } from '@/lib/api/types';
+import type { ActiveJob, CarRunStop, DeliveryStatus, DispatchReason, Job, PodType, RunStatus, WrongRunHint } from '@/lib/api/types';
 
 export const DELIVERY_STATUS_LABEL: Record<DeliveryStatus, string> = {
   searching_rider: 'New order',
@@ -53,7 +53,14 @@ export const REASON_MESSAGE: Partial<Record<DispatchReason, string>> = {
   already_taken: 'Another rider took this order.',
   busy: 'Finish your current delivery first.',
   offline: 'Go online to take orders.',
-  wrong_code: "That bag code doesn't match. Check the code on the bag and try again.",
+  invalid_token: "That isn't an Ahaar box label.",
+  token_expired: 'This box label has expired. Ask the kitchen to reprint it.',
+  token_revoked: 'This box label is no longer valid (delivered, reprinted or taken off the route).',
+  wrong_run: 'This box belongs to another route. Leave it at the kitchen.',
+  wrong_package: 'This box is for another stop.',
+  load_incomplete: 'Some boxes are not in the car yet. Scan them, or ask dispatch to allow the start.',
+  run_not_ready: "The kitchen hasn't marked this route ready yet. Labels come with it.",
+  app_update_required: 'Please update AHAAR Rider to continue.',
   invalid_transition: 'This order has moved on. Showing its latest status.',
   not_yours: 'This order is no longer assigned to you.',
   not_dispatchable: 'This order is no longer waiting for a rider.',
@@ -63,6 +70,34 @@ export const REASON_MESSAGE: Partial<Record<DispatchReason, string>> = {
 export function actionErrorMessage(error: unknown): string {
   const reason = errorReason(error);
   return (reason && REASON_MESSAGE[reason]) || extractErrorMessage(error);
+}
+
+export const RUN_STATUS_LABEL: Record<RunStatus, string> = {
+  draft: 'Being planned',
+  ready: 'Ready to load',
+  loading: 'Loading',
+  dispatched: 'On the road',
+  completed: 'Completed',
+};
+
+/** Label alphabet: no 0/O, 1/I/L or U look-alikes (docs/delivery-api.md, "Box labels"). */
+const BOX_TOKEN = /^(?:AHR-?)?([23456789ABCDEFGHJKMNPQRSTVWXYZ]{6})$/;
+
+/**
+ * The QR on a box sticker is the token text only (`AHR-9X4K2M`). Accepts it
+ * with or without the prefix, any case, and spaces from typing.
+ * Returns the canonical `AHR-XXXXXX`, or null for anything else.
+ */
+export function normalizeBoxToken(raw: string): string | null {
+  const text = raw.trim().toUpperCase().replace(/\s+/g, '');
+  const m = BOX_TOKEN.exec(text);
+  return m ? `AHR-${m[1]}` : null;
+}
+
+/** "Lunch route CR-…, Olaya" for a `wrong_run` box: where it belongs, never whose it is. */
+export function wrongRunText(hint: WrongRunHint | null | undefined): string {
+  const where = [hint?.slot_name, hint?.run_code, hint?.branch_name].filter(Boolean).join(' · ');
+  return where ? `This box belongs to another route (${where}). Leave it at the kitchen.` : REASON_MESSAGE.wrong_run!;
 }
 
 const BIKE_TRACKING: DeliveryStatus[] = ['accepted', 'heading_to_pickup', 'picked_up', 'on_the_way'];

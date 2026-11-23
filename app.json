@@ -76,14 +76,14 @@
       [
         "expo-image-picker",
         {
-          "cameraPermission": "AHAAR Rider uses the camera to scan the bag QR code at the kitchen and to take proof-of-delivery photos.",
+          "cameraPermission": "AHAAR Rider uses the camera to scan the QR sticker on subscription boxes and to take proof-of-delivery photos.",
           "microphonePermission": false
         }
       ],
       [
         "expo-camera",
         {
-          "cameraPermission": "AHAAR Rider uses the camera to scan the bag QR code at the kitchen and to take proof-of-delivery photos.",
+          "cameraPermission": "AHAAR Rider uses the camera to scan the QR sticker on subscription boxes and to take proof-of-delivery photos.",
           "microphonePermission": false,
           "recordAudioAndroid": false,
           "barcodeScannerEnabled": true

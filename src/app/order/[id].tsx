@@ -5,7 +5,6 @@ import { Pressable, RefreshControl, ScrollView, Text, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { toast } from 'sonner-native';
 
-import { BagScanner } from '@/components/delivery/BagScanner';
 import { DeliveryMap, mapsAvailable, type MapPin } from '@/components/delivery/DeliveryMap';
 import { JobStepper } from '@/components/delivery/JobStepper';
 import { OfferSummary } from '@/components/delivery/OfferSummary';
@@ -215,11 +214,8 @@ function OfferView({ offer, onGone }: { offer: Offer; onGone: () => void }) {
 function JobView({ job, refreshing, onRefresh }: { job: Job; refreshing: boolean; onRefresh: () => void }) {
   const router = useRouter();
   const step = useJobStep(job.order_id);
-  const [code, setCode] = useState('');
-  const [codeError, setCodeError] = useState<string | null>(null);
   const [completeOpen, setCompleteOpen] = useState(false);
   const [issueOpen, setIssueOpen] = useState(false);
-  const [scanOpen, setScanOpen] = useState(false);
 
   const actions = new Set(job.next_actions);
   const isFinal = FINAL.includes(job.delivery_status);
@@ -247,37 +243,16 @@ function JobView({ job, refreshing, onRefresh }: { job: Job; refreshing: boolean
     );
   };
 
-  /** `raw` is either the typed 4 digits or the scanned `AHAAR-BAG:<order_id>:<code>` text. */
-  const submitPickup = async (raw: string) => {
-    setCodeError(null);
+  /** Instant orders carry no code: one tap once the bag is in hand. */
+  const confirmPickup = async () => {
     const coords = await currentCoords();
     step.mutate(
-      { action: 'pickup', code: raw, coords },
+      { action: 'pickup', coords },
       {
-        onSuccess: () => {
-          setCode('');
-          toast.success('Pickup confirmed.');
-        },
-        onError: (err) => {
-          if (errorReason(err) === 'wrong_code') setCodeError(actionErrorMessage(err));
-          else toast.error(actionErrorMessage(err));
-        },
+        onSuccess: () => toast.success('Pickup confirmed.'),
+        onError: (err) => toast.error(actionErrorMessage(err)),
       },
     );
-  };
-
-  const confirmPickup = () => {
-    const trimmed = code.trim();
-    if (!trimmed) {
-      setCodeError('Enter the code printed on the bag.');
-      return;
-    }
-    submitPickup(trimmed);
-  };
-
-  const onBagScanned = (raw: string) => {
-    setScanOpen(false);
-    submitPickup(raw);
   };
 
   return (
@@ -342,51 +317,21 @@ function JobView({ job, refreshing, onRefresh }: { job: Job; refreshing: boolean
           </Card>
         ) : null}
 
-        {/* Pickup code */}
+        {/* Pickup: no code, no QR (bike orders). */}
         {actions.has('pickup') ? (
           <Card className="gap-3 border-brand-200">
             <View>
-              <Text className="text-base font-black text-text-primary">Confirm pickup</Text>
+              <Text className="text-base font-black text-text-primary">Got the bag?</Text>
               <Text className="text-xs text-text-secondary mt-0.5">
-                Ask the kitchen to show the bag code, or scan the QR on the admin screen / bag label.
+                Check the order number on the bag with the kitchen, then confirm. The kitchen may also confirm the handover for you.
               </Text>
             </View>
             <Button
-              label="Scan bag QR"
-              size="lg"
-              left={<Text>📷</Text>}
-              isLoading={pending === 'pickup' && !code.trim()}
-              disabled={step.isPending}
-              onPress={() => setScanOpen(true)}
-            />
-            <View className="flex-row items-center gap-2">
-              <View className="h-px flex-1 bg-border" />
-              <Text className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">or type the 4-digit code</Text>
-              <View className="h-px flex-1 bg-border" />
-            </View>
-            <Input
-              value={code}
-              onChangeText={(v) => {
-                setCode(v);
-                setCodeError(null);
-              }}
-              placeholder="0000"
-              keyboardType="number-pad"
-              autoCapitalize="none"
-              autoCorrect={false}
-              autoComplete="off"
-              spellCheck={false}
-              maxLength={32}
-              error={codeError ?? undefined}
-              className="text-center text-2xl font-black tracking-[4px]"
-              accessibilityLabel="Bag code"
-            />
-            <Button
               label="Confirm pickup"
-              variant="secondary"
-              size="md"
-              isLoading={pending === 'pickup' && Boolean(code.trim())}
-              disabled={step.isPending || code.trim().length === 0}
+              size="lg"
+              left={<Text>🛍️</Text>}
+              isLoading={pending === 'pickup'}
+              disabled={step.isPending}
               onPress={confirmPickup}
             />
           </Card>
@@ -447,7 +392,6 @@ function JobView({ job, refreshing, onRefresh }: { job: Job; refreshing: boolean
 
       <CompleteSheet job={job} open={completeOpen} onClose={() => setCompleteOpen(false)} step={step} />
       <IssueSheet open={issueOpen} onClose={() => setIssueOpen(false)} step={step} />
-      <BagScanner open={scanOpen} orderId={job.order_id} onClose={() => setScanOpen(false)} onScanned={onBagScanned} />
     </>
   );
 }

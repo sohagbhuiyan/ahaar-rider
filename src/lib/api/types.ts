@@ -100,9 +100,17 @@ export type DispatchReason =
   | 'not_eligible'
   | 'wrong_vehicle'
   | 'offline'
-  | 'wrong_code'
   | 'rider_unavailable'
-  | 'already_dispatched';
+  | 'already_dispatched'
+  // Car routes: box QR tokens (docs/delivery-api.md, "Box labels").
+  | 'invalid_token'
+  | 'token_expired'
+  | 'token_revoked'
+  | 'wrong_run'
+  | 'wrong_package'
+  | 'load_incomplete'
+  | 'run_not_ready'
+  | 'app_update_required';
 
 /** GET /rider/branches (public, registration form). */
 export interface PublicBranch {
@@ -175,6 +183,8 @@ export interface Job extends Offer {
   /** orders.status: the money/lifecycle field, not the delivery step. */
   status: string;
   customer: { name: string | null; phone: string | null };
+  /** Finished over 2 h ago: the customer phone and door are withheld (area and city kept). */
+  is_redacted?: boolean;
   address: {
     line1: string | null;
     line2: string | null;
@@ -205,6 +215,8 @@ export interface DeliveryAddress {
   line2?: string | null;
   area?: string | null;
   city?: string | null;
+  building_number?: string | null;
+  short_address?: string | null;
   instructions?: string | null;
   lat?: number | null;
   lng?: number | null;
@@ -232,10 +244,14 @@ export type StopStatus =
 export interface CarRunStop {
   delivery_id: number;
   stop_sequence: number;
-  verification_code: string;
+  /** The box was scanned into the car. */
+  is_loaded: boolean;
+  loaded_at: string | null;
   status: StopStatus;
   customer_name: string | null;
   customer_phone?: string | null;
+  /** Finished over 2 h ago: the customer phone and door are withheld (area and city kept). */
+  is_redacted?: boolean;
   address: DeliveryAddress;
   items: MealItem[];
   pod?: {
@@ -248,6 +264,18 @@ export interface CarRunStop {
   slot_name?: string | null;
 }
 
+/** Loading scan progress of a route. */
+export interface LoadProgress {
+  total: number;
+  loaded: number;
+  missing: { delivery_id: number; stop_sequence: number }[];
+  is_complete: boolean;
+  /** An admin allowed the start without every box (audit-logged). */
+  override: boolean;
+}
+
+export type RunStatus = 'draft' | 'ready' | 'loading' | 'dispatched' | 'completed';
+
 export interface CarRun {
   kind: 'run';
   run_id: number;
@@ -255,12 +283,39 @@ export interface CarRun {
   slot_name: string | null;
   slot_window: string | null;
   delivery_date: string | null;
-  status: 'ready' | 'dispatched' | 'completed';
+  status: RunStatus;
   branch: JobBranch | null;
   total_stops: number;
   completed_stops: number;
   started_at: string | null;
+  ready_at: string | null;
+  loading: LoadProgress | null;
+  can_start: boolean;
   stops: CarRunStop[];
+}
+
+/** POST /rider/runs/{id}/load. */
+export interface LoadResult {
+  result: 'loaded' | 'duplicate';
+  delivery_id: number;
+  stop_sequence: number;
+  progress: LoadProgress;
+}
+
+/** GET /rider/delivery/scan/{token}: the stop behind a box on your own route. */
+export interface QuickScan extends CarRunStop {
+  run_id: number;
+  run_status: RunStatus;
+  next_action: 'load' | 'deliver' | 'none';
+  maps_url: string | null;
+}
+
+/** 422 `wrong_run` data: where the box belongs. Never customer details. */
+export interface WrongRunHint {
+  run_code?: string | null;
+  slot_name?: string | null;
+  branch_name?: string | null;
+  delivery_date?: string | null;
 }
 
 /** GET /rider/jobs/active: a bike Job, a car Run, or nothing. */

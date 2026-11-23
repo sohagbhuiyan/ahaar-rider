@@ -15,14 +15,16 @@ import { toast } from 'sonner-native';
 
 import { Image } from 'expo-image';
 
+import { BoxScanner, type ScanFeedback } from '@/components/delivery/BoxScanner';
+import { scanErrorFeedback } from '@/components/delivery/QuickScan';
 import { RequireSession } from '@/components/session/RequireSession';
 import { Badge, Button, Card, ErrorState } from '@/components/ui';
-import { errorData, errorStatus } from '@/lib/api/client';
+import { errorData, errorReason } from '@/lib/api/client';
 import {
   useCompleteDelivery,
   useDeliveryDetail,
   useReportDeliveryIssue,
-  useVerifyPackage,
+  useScanBox,
 } from '@/lib/api/hooks/useRiderDeliveries';
 import {
   actionErrorMessage,
@@ -49,18 +51,18 @@ export default function DeliveryStopScreen() {
 
 function DeliveryStopContent() {
   const router = useRouter();
-  const { id } = useLocalSearchParams<{ id: string }>();
+  // `token`: the box was already scanned via Quick Scan at the door.
+  const { id, token: scannedToken } = useLocalSearchParams<{ id: string; token?: string }>();
 
   // TanStack Query Hooks
   const { data: delivery, isLoading, error, refetch } = useDeliveryDetail(id || '');
-  const verifyMutation = useVerifyPackage(id || '');
+  const scanBox = useScanBox();
   const completeMutation = useCompleteDelivery(id || '');
   const reportIssueMutation = useReportDeliveryIssue(id || '');
 
-  // Verification State
-  const [bagVerified, setIsBagVerified] = useState(false);
-  const [verifyModalOpen, setVerifyModalOpen] = useState(false);
-  const [scannedCodeInput, setScannedCodeInput] = useState('');
+  // Door scan: the box QR proves this is the right box for this stop. Sent with the completion.
+  const [doorToken, setDoorToken] = useState<string | null>(typeof scannedToken === 'string' ? scannedToken : null);
+  const [scanOpen, setScanOpen] = useState(false);
 
   // PoD Completion State
   const [podType, setPodType] = useState<PodType>('doorstep');
@@ -72,7 +74,7 @@ function DeliveryStopContent() {
   const [exceptionNotes, setExceptionNotes] = useState('');
   const [timerSeconds, setTimerSeconds] = useState(300); // 5 min timer
 
-  const isBagVerified = bagVerified || delivery?.status === 'delivered';
+  const isBagVerified = Boolean(doorToken) || delivery?.status === 'delivered';
 
   // 5-minute countdown for unreachable customer
   useEffect(() => {
@@ -99,33 +101,20 @@ function DeliveryStopContent() {
     openDirections({ lat, lng, query: [line1, area].filter(Boolean).join(', ') });
   };
 
-  // Step 1: Bag Barcode / QR Code Verification
-  const handleVerifyCode = (codeToVerify?: string) => {
-    const code = (codeToVerify || scannedCodeInput).trim().toUpperCase();
-    if (!code) {
-      toast.error('Please enter the code printed on the bag label.');
-      return;
+  // Step 1: scan the box QR at the door. Checked against this stop before the rider hands it over.
+  const onDoorToken = async (token: string): Promise<ScanFeedback> => {
+    try {
+      const stop = await scanBox.mutateAsync(token);
+      if (stop.delivery_id !== Number(id)) {
+        return { tone: 'danger', message: `Wrong box: this one is for stop #${stop.stop_sequence}. Find the box for stop #${delivery?.stop_sequence ?? ''}.` };
+      }
+      setDoorToken(token);
+      setScanOpen(false);
+      toast.success('Right box for this customer.');
+      return { tone: 'success', message: 'Right box for this customer.' };
+    } catch (error) {
+      return scanErrorFeedback(error);
     }
-
-    verifyMutation.mutate(code, {
-      onSuccess: (res) => {
-        if (res?.matched) {
-          setIsBagVerified(true);
-          setVerifyModalOpen(false);
-          setScannedCodeInput('');
-          toast.success('Package verified: correct bag for this customer.');
-        }
-      },
-      onError: (err) => {
-        // A wrong bag is a 422 that names the stop it belongs to (on your route).
-        const other = errorData<{ belonging_stop?: number | null }>(err)?.belonging_stop;
-        if (errorStatus(err) === 422 && other) {
-          toast.error(`Wrong bag: this one belongs to stop #${other}.`);
-        } else {
-          toast.error(actionErrorMessage(err));
-        }
-      },
-    });
   };
 
   // Step 2: Take Proof-of-Delivery Photo
@@ -140,16 +129,17 @@ function DeliveryStopContent() {
 
   // Step 3: Complete Delivery
   const handleCompleteDelivery = async () => {
-    if (!isBagVerified) {
+    if (!doorToken) {
       Alert.alert(
-        'Verification Required',
-        'You must verify the bag label QR code before completing delivery to prevent wrong drop-offs.',
-        [{ text: 'Scan Bag', onPress: () => setVerifyModalOpen(true) }]
+        'Scan the box first',
+        'Scan the QR sticker on the box before you hand it over, so this customer gets their own meals.',
+        [{ text: 'Scan box', onPress: () => setScanOpen(true) }]
       );
       return;
     }
 
     const formData = new FormData();
+    formData.append('token', doorToken);
     formData.append('pod_type', podType);
 
     if (podPhoto) formData.append('photo', photoPart(podPhoto));
@@ -161,7 +151,18 @@ function DeliveryStopContent() {
         router.back();
       },
       onError: (err) => {
-        toast.error(actionErrorMessage(err));
+        const reason = errorReason(err);
+        if (reason === 'wrong_package') {
+          const other = errorData<{ belonging_stop?: number | null }>(err)?.belonging_stop;
+          toast.error(other ? `Wrong box: this one is for stop #${other}.` : actionErrorMessage(err));
+        } else {
+          toast.error(actionErrorMessage(err));
+        }
+        // A wrong, reprinted or expired label can't be reused: scan again.
+        if (reason === 'wrong_package' || reason === 'token_revoked' || reason === 'token_expired' || reason === 'invalid_token') {
+          setDoorToken(null);
+          refetch();
+        }
       },
     });
   };
@@ -337,7 +338,7 @@ function DeliveryStopContent() {
             </View>
           </Card>
 
-          {/* Verification Step: Scan Bag QR */}
+          {/* Door scan: the box QR sticker */}
           <Card
             className={`p-4 ${
               isBagVerified
@@ -350,10 +351,10 @@ function DeliveryStopContent() {
                 <Text className="text-2xl">{isBagVerified ? '✅' : '🏷️'}</Text>
                 <View>
                   <Text className="text-xs font-bold text-text-muted uppercase">
-                    Package Verification
+                    Door scan
                   </Text>
                   <Text className="text-sm font-black text-text-primary mt-0.5">
-                    {delivery.verification_code || `AH-${delivery.delivery_id}`}
+                    {isBagVerified ? 'Right box for this stop' : `Box for stop #${delivery.stop_sequence}`}
                   </Text>
                 </View>
               </View>
@@ -367,12 +368,13 @@ function DeliveryStopContent() {
             {!isBagVerified && (
               <View className="mt-3 pt-3 border-t border-brand-200/60">
                 <Text className="text-xs text-brand-900 mb-2.5">
-                  Confirm package barcode before handing over to ensure this customer receives their specific meals.
+                  Scan the QR sticker on the box before handing it over, so this customer gets their own meals.
                 </Text>
                 <Button
-                  label="Scan or Enter Bag Code"
+                  label="Scan box at the door"
                   size="sm"
-                  onPress={() => setVerifyModalOpen(true)}
+                  isLoading={scanBox.isPending}
+                  onPress={() => setScanOpen(true)}
                 />
               </View>
             )}
@@ -485,72 +487,13 @@ function DeliveryStopContent() {
         </View>
       </ScrollView>
 
-      {/* ========================================================================= */}
-      {/* MODAL: BAG CODE SCANNER / VERIFIER                                        */}
-      {/* ========================================================================= */}
-      <Modal
-        visible={verifyModalOpen}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={() => setVerifyModalOpen(false)}
-      >
-        <SafeAreaView className="flex-1 bg-surface justify-between p-5">
-          <View>
-            <View className="flex-row items-center justify-between pb-3 border-b border-border">
-              <View>
-                <Text className="text-xs font-bold text-brand-700 uppercase">Verification</Text>
-                <Text className="text-xl font-black text-text-primary">Scan Package Code</Text>
-              </View>
-              <Pressable
-                onPress={() => setVerifyModalOpen(false)}
-                className="h-8 w-8 items-center justify-center rounded-full bg-surface-muted"
-              >
-                <Text className="font-bold text-text-secondary">✕</Text>
-              </Pressable>
-            </View>
-
-            <View className="mt-5 p-4 rounded-2xl bg-brand-50 border border-brand-200 items-center">
-              <Text className="text-xs text-brand-700 font-bold uppercase">Expected Package Label</Text>
-              <Text className="text-3xl font-mono font-black text-brand-900 mt-1">
-                {delivery.verification_code || `AH-${delivery.delivery_id}`}
-              </Text>
-              <Text className="text-xs text-brand-700 text-center mt-2">
-                Ensure this exact code is printed on the catering thermal bag.
-              </Text>
-            </View>
-
-            <View className="mt-6">
-              <Text className="text-xs font-bold text-text-primary mb-1.5">
-                Enter or Scan Code from Bag
-              </Text>
-              <TextInput
-                value={scannedCodeInput}
-                onChangeText={setScannedCodeInput}
-                placeholder={delivery.verification_code || 'AH-XX-SLOT'}
-                placeholderTextColor={colors.text.muted}
-                autoCapitalize="characters"
-                className="rounded-xl border border-border bg-surface-muted px-4 py-3 text-base font-mono text-text-primary"
-              />
-            </View>
-
-          </View>
-
-          <View className="gap-2.5 pt-4 border-t border-border">
-            <Button
-              label="Verify Package"
-              size="lg"
-              isLoading={verifyMutation.isPending}
-              onPress={() => handleVerifyCode()}
-            />
-            <Button
-              label="Cancel"
-              variant="outline"
-              size="md"
-              onPress={() => setVerifyModalOpen(false)}
-            />
-          </View>
-        </SafeAreaView>
-      </Modal>
+      <BoxScanner
+        open={scanOpen}
+        eyebrow={`Stop #${delivery.stop_sequence}`}
+        title="Scan the box at the door"
+        onClose={() => setScanOpen(false)}
+        onToken={onDoorToken}
+      />
 
       {/* ========================================================================= */}
       {/* MODAL: CUSTOMER UNAVAILABLE / EXCEPTION PROTOCOL                          */}

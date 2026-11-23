@@ -1,19 +1,22 @@
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { Modal, Pressable, RefreshControl, ScrollView, Text, TextInput, View } from 'react-native';
+import { Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { toast } from 'sonner-native';
 
 import { DeliveryMap, type MapPin } from '@/components/delivery/DeliveryMap';
+import { BoxScanner, type ScanFeedback } from '@/components/delivery/BoxScanner';
 import { OfferSummary } from '@/components/delivery/OfferSummary';
+import { QuickScanButton, scanErrorFeedback } from '@/components/delivery/QuickScan';
 import { Badge, Button, Card, EmptyState, ErrorState, LoadingSpinner } from '@/components/ui';
 import { errorReason } from '@/lib/api/client';
 import {
-  useAcceptHandover,
   useAcceptOffer,
   useActiveJob,
   useCarRunsToday,
+  useLoadBox,
   useOffers,
+  useStartRun,
 } from '@/lib/api/hooks/useRiderDeliveries';
 import type { CarRun, Job, Offer } from '@/lib/api/types';
 import { useAuthStore } from '@/lib/auth/authStore';
@@ -22,6 +25,7 @@ import {
   DELIVERY_STATUS_LABEL,
   DELIVERY_STATUS_VARIANT,
   isStopFinal,
+  RUN_STATUS_LABEL,
   STOP_STATUS_LABEL,
 } from '@/lib/delivery';
 import { colors } from '@/lib/theme';
@@ -191,7 +195,7 @@ function OfferCard({
 }
 
 // ===========================================================================
-// CAR: today's route
+// CAR: today's route (load every box, then drive stop by stop)
 // ===========================================================================
 
 function CarRunView() {
@@ -199,7 +203,6 @@ function CarRunView() {
   const isOnline = useAuthStore((s) => Boolean(s.profile?.is_active));
   const run = useCarRunsToday({ isOnline });
   const [filter, setFilter] = useState<'all' | 'pending' | 'completed'>('all');
-  const [handoverOpen, setHandoverOpen] = useState(false);
 
   if (run.isLoading) return <LoadingSpinner label="Loading your route…" className="flex-1" />;
   if (run.isError) return <ErrorState message={actionErrorMessage(run.error)} onRetry={() => run.refetch()} className="flex-1" />;
@@ -213,8 +216,8 @@ function CarRunView() {
       >
         <Card>
           <EmptyState
-            title="No route scheduled"
-            description="When the kitchen assigns today's catering run, its stops appear here in driving order."
+            title="No route assigned"
+            description="When dispatch gives you a subscription route, its stops appear here in driving order."
             actionLabel="Refresh"
             onAction={() => run.refetch()}
           />
@@ -224,6 +227,7 @@ function CarRunView() {
   }
 
   const stops = [...data.stops].sort((a, b) => a.stop_sequence - b.stop_sequence);
+  const atKitchen = data.status === 'ready' || data.status === 'loading';
   const next = data.status === 'dispatched' ? stops.find((s) => !isStopFinal(s.status)) : undefined;
   const pending = stops.filter((s) => !isStopFinal(s.status));
   const filtered = stops.filter((s) =>
@@ -249,24 +253,25 @@ function CarRunView() {
   }
 
   return (
-    <>
+    <View className="flex-1">
       <ScrollView
-        contentContainerStyle={{ padding: 20, paddingBottom: 110, gap: 16 }}
+        contentContainerStyle={{ padding: 20, paddingBottom: 180, gap: 16 }}
         refreshControl={<RefreshControl refreshing={run.isRefetching} onRefresh={run.refetch} tintColor={colors.brand[500]} />}
       >
         <RunHeader run={data} />
 
-        <DeliveryMap pins={pins} height={240} />
-
-        {data.status === 'ready' ? (
-          <Card className="bg-brand-50 border-brand-200 gap-2">
-            <Text className="font-black text-brand-900 text-sm">📦 Kitchen handover required</Text>
-            <Text className="text-xs text-brand-700">
-              Scan or type the code of each of the {data.total_stops} bags as you load them. You can depart once all match.
+        {data.status === 'draft' ? (
+          <Card className="bg-info-soft border-info/30 gap-1">
+            <Text className="font-black text-text-primary text-sm">🍳 The kitchen is preparing this route</Text>
+            <Text className="text-xs text-text-secondary">
+              Stops can still change. You will get a notification when the boxes are packed and labelled, then you can load the car.
             </Text>
-            <Button label="Scan bags for handover" size="md" onPress={() => setHandoverOpen(true)} />
           </Card>
         ) : null}
+
+        {atKitchen ? <LoadingPanel run={data} /> : null}
+
+        <DeliveryMap pins={pins} height={220} />
 
         {next ? (
           <Card onPress={() => router.push(`/delivery/${next.delivery_id}`)} className="border-brand-500 gap-1">
@@ -329,9 +334,13 @@ function CarRunView() {
                   />
                 </View>
                 <View className="mt-3 pt-3 border-t border-border flex-row items-center justify-between">
-                  <Text className="text-xs font-mono font-bold text-brand-700 bg-brand-50 px-2 py-0.5 rounded border border-brand-200">
-                    🏷️ {stop.verification_code}
-                  </Text>
+                  {atKitchen ? (
+                    <Text className={cn('text-xs font-bold', stop.is_loaded ? 'text-success' : 'text-warning')}>
+                      {stop.is_loaded ? '✓ In the car' : '○ Not loaded yet'}
+                    </Text>
+                  ) : (
+                    <View />
+                  )}
                   <Text className="text-xs text-text-muted">
                     {stop.items.length} item{stop.items.length === 1 ? '' : 's'}
                   </Text>
@@ -342,8 +351,8 @@ function CarRunView() {
         </View>
       </ScrollView>
 
-      <HandoverModal run={data} open={handoverOpen} onClose={() => setHandoverOpen(false)} />
-    </>
+      {data.status !== 'draft' && data.status !== 'completed' ? <QuickScanButton bottomOffset={96} /> : null}
+    </View>
   );
 }
 
@@ -352,7 +361,7 @@ function RunHeader({ run }: { run: CarRun }) {
   return (
     <Card className="gap-3">
       <View className="flex-row items-center justify-between">
-        <View>
+        <View className="flex-1 pr-2">
           <Text className="text-xs font-bold text-brand-700 uppercase tracking-wider">{run.run_code}</Text>
           <Text className="text-base font-black text-text-primary mt-0.5">
             {run.slot_name ?? 'Route'}
@@ -361,138 +370,131 @@ function RunHeader({ run }: { run: CarRun }) {
           {run.branch?.name ? <Text className="text-xs text-text-secondary">From {run.branch.name}</Text> : null}
         </View>
         <Badge
-          label={run.status === 'ready' ? 'LOADING' : run.status === 'dispatched' ? 'ON THE ROAD' : 'COMPLETED'}
-          variant={run.status === 'dispatched' ? 'brand' : run.status === 'completed' ? 'success' : 'warning'}
+          label={RUN_STATUS_LABEL[run.status].toUpperCase()}
+          variant={run.status === 'dispatched' ? 'brand' : run.status === 'completed' ? 'success' : run.status === 'draft' ? 'muted' : 'warning'}
         />
       </View>
-      <View>
-        <View className="flex-row justify-between mb-1.5">
-          <Text className="text-xs text-text-secondary font-medium">Progress</Text>
-          <Text className="text-xs font-bold text-text-primary">
-            {run.completed_stops} of {run.total_stops} stops
-          </Text>
+      {run.status === 'dispatched' || run.status === 'completed' ? (
+        <View>
+          <View className="flex-row justify-between mb-1.5">
+            <Text className="text-xs text-text-secondary font-medium">Progress</Text>
+            <Text className="text-xs font-bold text-text-primary">
+              {run.completed_stops} of {run.total_stops} stops
+            </Text>
+          </View>
+          <ProgressBar pct={pct} />
         </View>
-        <View className="h-2 w-full bg-surface-muted rounded-full overflow-hidden border border-border">
-          <View className="h-full bg-brand-500 rounded-full" style={{ width: `${pct}%` }} />
-        </View>
-      </View>
+      ) : null}
     </Card>
   );
 }
 
-function HandoverModal({ run, open, onClose }: { run: CarRun; open: boolean; onClose: () => void }) {
-  const handover = useAcceptHandover();
-  const [input, setInput] = useState('');
-  const [codes, setCodes] = useState<string[]>([]);
-  const [missing, setMissing] = useState<string[]>([]);
+function ProgressBar({ pct, tone = 'brand' }: { pct: number; tone?: 'brand' | 'success' }) {
+  return (
+    <View className="h-2 w-full bg-surface-muted rounded-full overflow-hidden border border-border">
+      <View className={cn('h-full rounded-full', tone === 'success' ? 'bg-success' : 'bg-brand-500')} style={{ width: `${Math.min(100, pct)}%` }} />
+    </View>
+  );
+}
 
-  const add = () => {
-    const code = input.trim().toUpperCase();
-    if (!code) return;
-    setInput('');
-    if (codes.includes(code)) {
-      toast.info('Bag already scanned.');
-      return;
+/** Loading at the kitchen: scan every box into the car, then start. */
+function LoadingPanel({ run }: { run: CarRun }) {
+  const load = useLoadBox(run.run_id);
+  const start = useStartRun();
+  const [scanning, setScanning] = useState(false);
+
+  const progress = run.loading ?? { total: run.total_stops, loaded: 0, missing: [], is_complete: false, override: false };
+  const pct = progress.total > 0 ? (progress.loaded / progress.total) * 100 : 0;
+  const missingStops = progress.missing.map((m) => m.stop_sequence).sort((a, b) => a - b);
+
+  const onToken = async (token: string): Promise<ScanFeedback> => {
+    try {
+      const res = await load.mutateAsync(token);
+      const left = res.progress.total - res.progress.loaded;
+      if (res.result === 'duplicate') {
+        return { tone: 'warning', message: `Stop ${res.stop_sequence} is already in the car. ${left} to go.` };
+      }
+      return {
+        tone: 'success',
+        message: left === 0 ? `Stop ${res.stop_sequence} loaded. Every box is in the car.` : `Stop ${res.stop_sequence} loaded. ${left} to go.`,
+      };
+    } catch (error) {
+      return scanErrorFeedback(error);
     }
-    setCodes((c) => [...c, code]);
-    setMissing((m) => m.filter((x) => x !== code));
   };
 
-  const submit = () => {
-    if (codes.length === 0) {
-      toast.error('Scan at least one bag first.');
-      return;
-    }
-    handover.mutate(
-      { runId: run.run_id, scannedCodes: codes },
-      {
-        onSuccess: (res) => {
-          if (res?.all_matched) {
-            toast.success('All bags verified. You can depart!');
-            setCodes([]);
-            setMissing([]);
-            onClose();
-          } else {
-            setMissing(res?.missing_codes ?? []);
-            toast.warning(`${res?.missing_count ?? 'Some'} bag(s) still missing.`);
-          }
-        },
-        onError: (err) => toast.error(actionErrorMessage(err)),
-      },
-    );
-  };
+  const onStart = () =>
+    start.mutate(run.run_id, {
+      onSuccess: () => toast.success('Route started. Drive safe!'),
+      onError: (err) => toast.error(actionErrorMessage(err)),
+    });
+
+  const canStart = run.can_start || progress.is_complete || progress.override;
 
   return (
-    <Modal visible={open} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-      <SafeAreaView className="flex-1 bg-surface justify-between p-5">
-        <View className="flex-1">
-          <View className="flex-row items-center justify-between pb-3 border-b border-border">
-            <View>
-              <Text className="text-xs font-bold text-brand-700 uppercase tracking-wider">Handover · {run.run_code}</Text>
-              <Text className="text-xl font-black text-text-primary mt-0.5">Scan route bags</Text>
-            </View>
-            <Pressable onPress={onClose} accessibilityLabel="Close" className="h-8 w-8 items-center justify-center rounded-full bg-surface-muted">
-              <Text className="font-bold text-text-secondary">✕</Text>
-            </Pressable>
-          </View>
+    <Card className="gap-3 border-brand-200 bg-brand-50">
+      <View>
+        <Text className="font-black text-brand-900 text-sm">📦 Load the car</Text>
+        <Text className="text-xs text-brand-700 mt-0.5">
+          Scan the QR sticker on every box as it goes into the car. Boxes of other routes are flagged.
+        </Text>
+      </View>
 
-          <Text className="text-xs text-text-secondary mt-3">Type the code printed on each bag label as you load it.</Text>
-
-          <View className="mt-4 flex-row gap-2">
-            <TextInput
-              value={input}
-              onChangeText={setInput}
-              onSubmitEditing={add}
-              returnKeyType="done"
-              blurOnSubmit={false}
-              placeholder="Bag code"
-              placeholderTextColor={colors.text.muted}
-              autoCapitalize="characters"
-              autoCorrect={false}
-              className="flex-1 rounded-xl border border-border bg-surface-muted px-4 py-2.5 text-sm font-mono text-text-primary"
-            />
-            <Button label="Add" size="sm" fullWidth={false} className="px-5" onPress={add} />
-          </View>
-
-          <Text className="mt-3 text-xs font-bold text-text-secondary">
-            Scanned {codes.length} of {run.total_stops}
+      <View>
+        <View className="flex-row justify-between mb-1.5">
+          <Text className="text-xs font-medium text-text-secondary">Boxes loaded</Text>
+          <Text className="text-xs font-black text-text-primary">
+            {progress.loaded} / {progress.total}
           </Text>
+        </View>
+        <ProgressBar pct={pct} tone={progress.is_complete ? 'success' : 'brand'} />
+      </View>
 
-          <ScrollView className="mt-2 flex-1 border border-border rounded-xl p-3 bg-surface-muted">
-            {codes.length === 0 ? (
-              <Text className="text-xs text-text-muted text-center py-6">No bags scanned yet.</Text>
-            ) : (
-              <View className="flex-row flex-wrap gap-2">
-                {codes.map((code) => (
-                  <View key={code} className="flex-row items-center gap-1.5 bg-brand-50 border border-brand-200 px-2.5 py-1 rounded-lg">
-                    <Text className="text-xs font-mono font-bold text-brand-700">{code}</Text>
-                    <Pressable onPress={() => setCodes((c) => c.filter((x) => x !== code))} hitSlop={8}>
-                      <Text className="text-xs font-bold text-text-muted">×</Text>
-                    </Pressable>
-                  </View>
-                ))}
-              </View>
-            )}
-          </ScrollView>
+      {missingStops.length > 0 ? (
+        <Text className="text-xs text-text-secondary">
+          Still missing: stop{missingStops.length === 1 ? '' : 's'} {missingStops.join(', ')}
+        </Text>
+      ) : null}
+      {progress.override && !progress.is_complete ? (
+        <Text className="text-xs font-bold text-warning">
+          Dispatch allowed the start without every box. Unloaded stops come off your route.
+        </Text>
+      ) : null}
 
-          {missing.length > 0 ? (
-            <View className="mt-3 rounded-xl bg-warning-soft border border-warning/30 p-3">
-              <Text className="text-xs font-bold text-warning">Still missing</Text>
-              <Text className="text-xs font-mono text-text-primary mt-1">{missing.join(', ')}</Text>
+      <Button
+        label={progress.loaded === 0 ? 'Scan boxes into the car' : 'Continue scanning'}
+        size="lg"
+        left={<Text>📷</Text>}
+        onPress={() => setScanning(true)}
+      />
+      <Button
+        label={canStart ? 'Start route' : `Start route (${progress.total - progress.loaded} missing)`}
+        variant={canStart ? 'primary' : 'secondary'}
+        size="md"
+        disabled={!canStart}
+        isLoading={start.isPending}
+        onPress={onStart}
+      />
+
+      <BoxScanner
+        open={scanning}
+        eyebrow={`Loading · ${run.run_code}`}
+        title="Scan each box into the car"
+        continuous
+        onClose={() => setScanning(false)}
+        onToken={onToken}
+        footer={
+          <View className="gap-1.5">
+            <Text className="text-sm font-bold text-white">
+              {progress.loaded} of {progress.total} boxes in the car
+            </Text>
+            <View className="h-2 w-full overflow-hidden rounded-full bg-white/20">
+              <View className="h-full rounded-full bg-success" style={{ width: `${Math.min(100, pct)}%` }} />
             </View>
-          ) : null}
-        </View>
-
-        <View className="gap-2.5 pt-4 border-t border-border">
-          <Button
-            label={`Verify & depart (${codes.length}/${run.total_stops})`}
-            size="lg"
-            isLoading={handover.isPending}
-            onPress={submit}
-          />
-          <Button label="Cancel" variant="outline" size="md" onPress={onClose} />
-        </View>
-      </SafeAreaView>
-    </Modal>
+            {missingStops.length > 0 ? <Text className="text-xs text-white/70">Missing: stop {missingStops.join(', ')}</Text> : null}
+          </View>
+        }
+      />
+    </Card>
   );
 }

@@ -25,7 +25,9 @@ export type PushType =
   | 'offer.taken'
   | 'job.cancelled'
   | 'job.updated'
-  | 'run.assigned';
+  | 'run.assigned'
+  | 'run.ready'
+  | 'run.updated';
 
 /** The push `data` block: strings only. */
 export interface PushData {
@@ -81,11 +83,18 @@ export function routeForNotification(target: NotificationTarget): string | null 
   switch (target.type) {
     case 'offer.new':
     case 'offer.assigned':
-    case 'offer.taken':
-    case 'job.cancelled':
     case 'job.updated':
       return orderId ? `/order/${orderId}` : '/(tabs)/orders';
+    // Gone from this rider (taken, cancelled, reassigned, timed out): opening
+    // the order would show an error, or an accept card for an order dispatch
+    // just took back. The orders tab shows what is actually theirs now.
+    case 'offer.taken':
+    case 'job.cancelled':
+      return '/(tabs)/orders';
     case 'run.assigned':
+    case 'run.ready':
+    case 'run.updated':
+      // The route tab: loading screen when ready, stops otherwise.
       return '/(tabs)/orders';
     default:
       if (orderId) return `/order/${orderId}`;
