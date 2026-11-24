@@ -196,7 +196,10 @@ export interface Job extends Offer {
     lat: number | null;
     lng: number | null;
   };
-  items: { name: string; quantity: number; unit_price: number }[];
+  /** `kind` is sent by newer APIs: a meal box is one line the kitchen packs. */
+  items: { name: string; quantity: number; unit_price: number; kind?: 'item' | 'package' }[];
+  /** The customer's note for the kitchen / rider (null once the job is redacted). */
+  notes?: string | null;
   next_actions: JobAction[];
   pod: {
     pod_type: PodType | null;

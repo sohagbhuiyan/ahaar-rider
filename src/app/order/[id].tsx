@@ -30,7 +30,7 @@ import {
   takePhoto,
 } from '@/lib/delivery';
 import { colors } from '@/lib/theme';
-import { cn, formatMoney } from '@/lib/utils';
+import { CURRENCY_CODE, cn, formatMoney } from '@/lib/utils';
 
 const FINAL = ['delivered', 'failed', 'cancelled'];
 
@@ -344,11 +344,21 @@ function JobView({ job, refreshing, onRefresh }: { job: Job; refreshing: boolean
           </Text>
           {job.items.map((item, i) => (
             <View key={`${item.name}-${i}`} className="flex-row items-center justify-between rounded-xl bg-surface-muted border border-border px-3 py-2">
-              <Text className="flex-1 text-sm font-semibold text-text-primary" numberOfLines={2}>{item.name}</Text>
+              <Text className="flex-1 text-sm font-semibold text-text-primary" numberOfLines={2}>
+                {item.name}
+                {item.kind === 'package' ? <Text className="text-xs font-normal text-text-muted">  · meal box</Text> : null}
+              </Text>
               <Text className="text-xs font-black text-brand-700">×{item.quantity}</Text>
             </View>
           ))}
         </Card>
+
+        {job.notes ? (
+          <Card className="gap-1">
+            <Text className="text-xs font-bold uppercase tracking-wider text-text-muted">Customer note</Text>
+            <Text className="text-sm text-text-primary">{job.notes}</Text>
+          </Card>
+        ) : null}
 
         {beforePickup && !isFinal ? <CustomerCard job={job} compact /> : null}
       </ScrollView>
@@ -552,7 +562,7 @@ function CompleteSheet({ job, open, onClose, step }: { job: Job; open: boolean; 
 
         {cashDue != null ? (
           <Input
-            label={`Cash collected (${job.currency})`}
+            label={`Cash collected (${!job.currency || job.currency === 'EUR' ? CURRENCY_CODE : job.currency})`}
             value={cash}
             onChangeText={(v) => setCash(v.replace(/[^\d.]/g, ''))}
             keyboardType="decimal-pad"
