@@ -4,11 +4,11 @@
     "slug": "ahaar-rider",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/logo.png",
+    "icon": "./assets/images/icon.png",
     "scheme": "ahaarrider",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "icon": "./assets/expo.icon",
+      "icon": "./assets/images/icon.png",
       "infoPlist": {
         "UIBackgroundModes": [
           "location",
@@ -18,10 +18,9 @@
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/logo.png",
-        "backgroundImage": "./assets/images/logo.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+        "backgroundColor": "#FFFFFF",
+        "foregroundImage": "./assets/images/brand/adaptive-foreground.png",
+        "monochromeImage": "./assets/images/brand/adaptive-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
       "package": "store.ahaarrider",
@@ -45,9 +44,10 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#208AEF",
-          "image": "./assets/images/logo.png",
-          "imageWidth": 76
+          "backgroundColor": "#E04E0C",
+          "image": "./assets/images/brand/splash-plate.png",
+          "imageWidth": 220,
+          "resizeMode": "contain"
         }
       ],
       [

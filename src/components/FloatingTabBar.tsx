@@ -170,7 +170,9 @@ function TabItem({
                 height: 16,
                 paddingHorizontal: 4,
                 borderRadius: 8,
-                backgroundColor: ACTIVE_COLOR,
+                // Secondary (#E04E0C): white text is only legible on the
+                // darker brand step, never on the #FF7A00 primary.
+                backgroundColor: colors.brand[700],
                 alignItems: "center",
                 justifyContent: "center",
                 borderWidth: 1.5,

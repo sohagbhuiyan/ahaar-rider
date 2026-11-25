@@ -52,7 +52,7 @@ export function QuickScanButton({ bottomOffset = 96 }: { bottomOffset?: number }
         className="absolute right-5 flex-row items-center gap-2 rounded-full bg-brand-500 px-5 py-3.5 shadow-lg active:opacity-90"
       >
         <Text className="text-lg">📦</Text>
-        <Text className="text-sm font-black text-white">Quick Scan Box</Text>
+        <Text className="text-sm font-black text-text-primary">Quick Scan Box</Text>
       </Pressable>
 
       <BoxScanner

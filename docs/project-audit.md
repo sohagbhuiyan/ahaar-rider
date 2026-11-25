@@ -27,6 +27,7 @@ A comprehensive, code-level investigation of all four projects in the AHAAR ecos
   - `ahaar-rider/ui-design.md`: Stated Orange `#FF7A00` / `#E04E0C` while saying *"Use pink strategically"*.
   - `ahaar-rider/src/lib/theme.ts`: Coded with Forest Green (`#347650`, `#24613f`).
   *Resolution:* Must unify `ahaar-rider` to the canonical `#FF2B85` design tokens from `ahaar-app/src/lib/tokens.js`.
+  *Superseded (Nov 2026):* the brand is no longer pink. Web + customer app use orange `#EA580C` (their `ui-design.md`); the rider app uses its own orange palette `#FF7A00` / `#E04E0C` (`ahaar-rider/ui-design.md`, `src/lib/tokens.js`).
 * **Missing Branch Concept:** While business rules require supporting "all three existing AHAAR branches", the existing database has no `branches` table, model, or foreign key. Operations currently assume a single central kitchen.
 
 ---

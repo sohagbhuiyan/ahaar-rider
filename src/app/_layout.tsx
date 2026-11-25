@@ -9,6 +9,7 @@ import '@/lib/session';
 import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 import { focusManager, QueryClientProvider } from '@tanstack/react-query';
 import { Stack } from 'expo-router';
+import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { AppState, Platform } from 'react-native';
@@ -16,11 +17,15 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { Toaster } from 'sonner-native';
 
+import { RiderSplash } from '@/components/RiderSplash';
 import { SessionEffects } from '@/components/session/SessionEffects';
 import { queryClient } from '@/lib/api/queryClient';
 import { useAuthStore } from '@/lib/auth/authStore';
 import { colors } from '@/lib/theme';
 import '../global.css';
+
+// `RiderSplash` takes over from the native splash on its first frame and hides it.
+SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
 export default function RootLayout() {
   const restoreToken = useAuthStore((s) => s.restoreToken);
@@ -76,6 +81,8 @@ export default function RootLayout() {
                 descriptionStyle: { color: colors.text.secondary },
               }}
             />
+
+            <RiderSplash />
           </BottomSheetModalProvider>
         </QueryClientProvider>
       </SafeAreaProvider>

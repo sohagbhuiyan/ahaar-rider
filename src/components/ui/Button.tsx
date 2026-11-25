@@ -91,6 +91,8 @@ export function Button({
       accessibilityRole="button"
       accessibilityState={{ disabled: isDisabled, busy: isButtonLoading }}
       disabled={isDisabled}
+      // Rider guide: 48px minimum tap target — the 36px `sm` button gets the rest as slop.
+      hitSlop={size === 'sm' ? 6 : undefined}
       className={cn(
         'flex-row items-center justify-center gap-2',
         SIZE[size],

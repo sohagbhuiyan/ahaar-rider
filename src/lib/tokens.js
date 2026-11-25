@@ -51,6 +51,8 @@ const status = {
   dangerSoft: '#FEF2F2',
   info: '#2563EB',
   infoSoft: '#EFF6FF',
+  disabled: '#8C8C8C',
+  disabledSoft: '#E5E7EB',
 };
 
 module.exports = { brand, surface, text, border, status };

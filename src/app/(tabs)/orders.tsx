@@ -315,7 +315,7 @@ function CarRunView() {
                     <View
                       className={cn(
                         'h-7 w-7 rounded-full items-center justify-center',
-                        isDone ? 'bg-success' : isFailed ? 'bg-danger' : isNext ? 'bg-brand-500' : 'bg-info',
+                        isDone ? 'bg-success' : isFailed ? 'bg-danger' : isNext ? 'bg-brand-700' : 'bg-info',
                       )}
                     >
                       <Text className="text-xs font-black text-white">{stop.stop_sequence}</Text>

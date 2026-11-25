@@ -35,7 +35,7 @@ export function JobStepper({ status }: { status: DeliveryStatus }) {
               <View
                 className={cn(
                   'h-7 w-7 items-center justify-center rounded-full border-2',
-                  done && 'bg-brand-500 border-brand-500',
+                  done && 'bg-brand-700 border-brand-700',
                   active && 'bg-brand-50 border-brand-500',
                   !done && !active && (failed && i === current ? 'bg-danger-soft border-danger' : 'bg-surface border-border'),
                 )}

@@ -22,6 +22,8 @@ module.exports = {
         "danger-soft": status.dangerSoft,
         info: status.info,
         "info-soft": status.infoSoft,
+        disabled: status.disabled,
+        "disabled-soft": status.disabledSoft,
       },
       fontFamily: {
         sans: ["System", "ui-sans-serif"],
